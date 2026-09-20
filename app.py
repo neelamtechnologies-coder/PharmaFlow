@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, time delta
 from db import run_query, init_db
-from auth import hash_password, verify_password
+from auth import hash_password, varify_password
 
 st.set_page_config(
     page_title="PharmaFlow - Cloud Medical ERP",
