@@ -93,3 +93,11 @@ def run_query(query: str, params: dict = None):
             return pd.DataFrame(result.fetchall(), columns=result.keys())
         conn.commit()
         return None
+    def get_engine():
+    db_url = st.secrets["postgres"]["url"]
+    return create_engine(
+        db_url,
+        connect_args={"sslmode": "require"},
+        pool_pre_ping=True,
+        pool_recycle=300
+    )
