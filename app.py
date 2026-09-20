@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, time delta
+from datetime import datetime, timedelta
 from db import run_query, init_db
 from auth import hash_password, varify_password
 
