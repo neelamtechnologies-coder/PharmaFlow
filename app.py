@@ -1,174 +1,305 @@
 import streamlit as st
-from datetime import date, timedelta
-from db import run_query, execute_query
-from auth import authenticate_user, hash_password
+import pandas as pd
+from datetime import datetime, timedelta
+from db import run_query, init_db
+from auth import hash_password, verify_password
 
-st.set_page_config(page_title="PharmaFlow ERP", page_icon="💊", layout="wide")
+st.set_page_config(
+    page_title="PharmaFlow - Cloud Medical ERP",
+    page_icon="💊",
+    layout="wide"
+)
 
-if "user" not in st.session_state:
-    st.session_state.user = None
+# Ensure schema exists on startup
+try:
+    init_db()
+except Exception:
+    pass
 
+# Session state initialization
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "user_info" not in st.session_state:
+    st.session_state.user_info = None
+
+# Custom Header
 st.title("💊 PharmaFlow - Cloud Medical ERP")
 st.caption("A Product of Neelam Technologies | Multi-Tenant Cloud Architecture")
 st.markdown("---")
 
-# 1. LOGGED IN STATE
-if st.session_state.user:
-    u = st.session_state.user
-    
-    st.sidebar.success(f"User: **{u['username']}** ({u['role']})")
-    if u.get("store_name"):
-        st.sidebar.info(f"Store: **{u['store_name']}**")
-    
-    if st.sidebar.button("Logout", use_container_width=True):
-        st.session_state.user = None
-        st.rerun()
+# ----------------- AUTHENTICATION / ONBOARDING -----------------
+if not st.session_state.logged_in:
+    auth_mode = st.radio(
+        "Chunein:",
+        ["Chemist / Admin Login", "Register New Pharmacy (7-Day Instant Trial)"],
+        horizontal=True
+    )
 
-    # --- A. MASTER ADMIN AUDIT PANEL ---
-    if u["role"] == "WHOLESALER" and u["username"] == "admin":
-        st.subheader("🛡️ Neelam Technologies - Central Audit & Licensing")
-        st.info("Master Alert Inbox: contact.neelamtechnologies@gmail.com")
-        
-        tab_stores, tab_renew = st.tabs(["📋 All Onboarded Stores", "⚡ Instant Plan Renewal"])
-        
-        with tab_stores:
-            st.write("Distributors dwara onboard kiye gaye sabhi retail accounts:")
-            all_stores = run_query("""
-                SELECT store_id, store_name, owner_name, phone, email, distributor_code, 
-                       subscription_status, expiry_date, created_at
-                FROM stores 
-                ORDER BY created_at DESC;
-            """)
-            st.dataframe(all_stores, use_container_width=True)
-
-        with tab_renew:
-            st.write("Payment receive hone par store ki validity extend karein:")
-            active_list = run_query("SELECT store_id, store_name, phone FROM stores;")
-            if not active_list.empty:
-                c1, c2, c3 = st.columns([2, 1, 1])
-                with c1:
-                    store_choice = st.selectbox(
-                        "Store Chunein:", 
-                        active_list["store_id"], 
-                        format_func=lambda x: f"ID {x} - {active_list.loc[active_list['store_id'] == x, 'store_name'].values[0]}"
-                    )
-                with c2:
-                    add_months = st.selectbox("Validity Add Karein:", [1, 3, 6, 12], index=0)
-                with c3:
-                    st.write("")
-                    st.write("")
-                    if st.button("Extend License", use_container_width=True):
-                        new_exp = date.today() + timedelta(days=add_months * 30)
-                        execute_query(
-                            "UPDATE stores SET subscription_status = 'ACTIVE', expiry_date = :exp WHERE store_id = :sid",
-                            {"exp": new_exp, "sid": store_choice}
-                        )
-                        st.success(f"Store #{store_choice} ka subscription {add_months} mahine ke liye renew ho gaya!")
-                        st.rerun()
-
-    # --- B. CHEMIST VIEW (AUTO-TRIAL & EXPIRY LOCK) ---
-    else:
-        store_check = run_query(
-            "SELECT subscription_status, expiry_date FROM stores WHERE store_id = :sid", 
-            {"sid": u["store_id"]}
-        ).iloc[0]
-        
-        today = date.today()
-        expiry = store_check["expiry_date"]
-        days_left = (expiry - today).days
-
-        # HARD EXPIRY LOCKOUT
-        if days_left < 0:
-            st.error("⛔ AAPKA PHARMAFLOW LICENSE EXPIRE HO CHUKA HAI")
-            st.warning("Aapka 7 din ka free trial ya subscription period poora ho gaya hai. Service continue rakhne ke liye apne distributor se renewal karwayein.")
-            st.info("Technical Support: contact.neelamtechnologies@gmail.com | Powered by Neelam Technologies")
-            st.stop()
-
-        # TRIAL RUNNER BANNER
-        if store_check["subscription_status"] == "TRIAL":
-            st.warning(f"⏳ Free Trial Active: Aapke paas **{days_left} din** bache hain. Uske baad automated lock lag jayega.")
-        else:
-            st.success(f"✅ Subscription Active (Valid till: {expiry})")
-
-        # Main Store Interface
-        st.subheader(f"Store: {u['store_name']}")
-        t1, t2, t3 = st.tabs(["🛒 Quick Billing", "📦 Inventory / Stock", "📊 Sales Summary"])
-        
-        with t1:
-            st.write("⚡ Fast Chemist Billing POS (Ready)")
-        with t2:
-            inv_df = run_query(
-                "SELECT medicine_name, batch_no, expiry_date, quantity, mrp FROM inventory WHERE store_id = :s;", 
-                {"s": u["store_id"]}
-            )
-            st.dataframe(inv_df, use_container_width=True)
-        with t3:
-            st.write("Turnover aur GST details.")
-
-# 2. LOGIN & ONBOARDING STATE
-else:
-    mode = st.radio("Chunein:", ["Chemist / Admin Login", "Register New Pharmacy (7-Day Instant Trial)"], horizontal=True)
-
-    if mode == "Chemist / Admin Login":
+    if auth_mode == "Chemist / Admin Login":
         st.subheader("Login Portal")
-        with st.form("login_form"):
-            uname = st.text_input("Username")
-            pwd = st.text_input("Password", type="password")
-            if st.form_submit_button("Sign In", use_container_width=True):
-                if uname == "admin" and pwd == "admin123":
-                    st.session_state.user = {
-                        "user_id": 0, "store_id": None, "username": "admin", 
-                        "role": "WHOLESALER", "store_name": "Neelam Technologies HQ"
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            if st.button("Sign In", type="primary", use_container_width=True):
+                # Hardcoded Super Admin fallback
+                if username == "admin" and password == "admin123":
+                    st.session_state.logged_in = True
+                    st.session_state.user_info = {
+                        "username": "admin",
+                        "role": "WHOLESALER",
+                        "store_name": "Neelam Technologies HQ",
+                        "store_id": 0,
+                        "subscription_status": "ACTIVE"
                     }
                     st.rerun()
-
-                user = authenticate_user(uname, pwd)
-                if user:
-                    st.session_state.user = user
-                    st.rerun()
                 else:
-                    st.error("Invalid Username ya Password.")
+                    user_df = run_query(
+                        """
+                        SELECT u.id, u.username, u.password_hash, u.role, u.store_id,
+                               s.store_name, s.subscription_status, s.plan_expiry_date
+                        FROM users u
+                        LEFT JOIN stores s ON u.store_id = s.id
+                        WHERE u.username = :username
+                        """,
+                        {"username": username}
+                    )
+                    if user_df is not None and not user_df.empty:
+                        user = user_df.iloc[0]
+                        if verify_password(password, user["password_hash"]):
+                            # License expiry lockout check for tenants
+                            if user["role"] != "WHOLESALER":
+                                expiry = pd.to_datetime(user["plan_expiry_date"])
+                                if datetime.now() > expiry:
+                                    st.error("⚠️ Aapka 7-day trial/license expire ho gaya hai. Kripya Neelam Technologies se contact karein: contact.neelamtechnologies@gmail.com")
+                                    st.stop()
+                            st.session_state.logged_in = True
+                            st.session_state.user_info = {
+                                "username": user["username"],
+                                "role": user["role"],
+                                "store_name": user["store_name"],
+                                "store_id": user["store_id"],
+                                "subscription_status": user["subscription_status"]
+                            }
+                            st.rerun()
+                        else:
+                            st.error("Galat password!")
+                    else:
+                        st.error("User nahi mila!")
 
     else:
-        st.subheader("Register New Pharmacy (Instant 7-Day Trial)")
-        with st.form("reg_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                s_name = st.text_input("Medical Store Name *")
-                o_name = st.text_input("Owner Name *")
-                phone = st.text_input("Phone Number (10 digits) *")
-                email = st.text_input("Retailer Email ID *", placeholder="store@example.com")
-                dl_no = st.text_input("Drug License No.")
-            with c2:
-                dist_code = st.text_input("Distributor Agency / Code *", placeholder="e.g. INDORE-MEDICO-01")
-                username = st.text_input("Store Login Username *")
-                password = st.text_input("Store Login Password *", type="password")
+        st.subheader("Register Pharmacy - 7-Day Free Trial")
+        with st.form("register_store_form"):
+            s_name = st.text_input("Store / Pharmacy Name *")
+            o_name = st.text_input("Owner Full Name *")
+            s_email = st.text_input("Official Email *")
+            s_phone = st.text_input("Phone Number")
+            dist_code = st.text_input("Distributor / Referral Code (Optional)")
+            admin_user = st.text_input("Create Admin Username *")
+            admin_pass = st.text_input("Create Password *", type="password")
+            submitted = st.form_submit_button("Start 7-Day Instant Trial", type="primary")
 
-            if st.form_submit_button("Create Account & Start 7-Day Trial", use_container_width=True):
-                if not (s_name and o_name and phone and email and username and password and dist_code):
-                    st.warning("Sabhi zaroori details (email sahit) bharein.")
+            if submitted:
+                if not s_name or not s_email or not admin_user or not admin_pass:
+                    st.warning("Kripya sabhi mandatory (*) fields bharein.")
                 else:
-                    trial_exp = date.today() + timedelta(days=7)
-                    
                     try:
-                        ins_store = """
-                            INSERT INTO stores (store_name, owner_name, phone, email, drug_license_no, subscription_status, expiry_date, distributor_code)
-                            VALUES (:s_name, :o_name, :phone, :email, :dl, 'TRIAL', :exp, :dist);
-                        """
-                        execute_query(ins_store, {
-                            "s_name": s_name, "o_name": o_name, "phone": phone, "email": email,
-                            "dl": dl_no, "exp": trial_exp, "dist": dist_code
-                        })
-                        
-                        store_res = run_query("SELECT store_id FROM stores WHERE phone = :p ORDER BY store_id DESC LIMIT 1;", {"p": phone})
-                        new_store_id = int(store_res["store_id"].iloc[0])
+                        expiry_date = datetime.now() + timedelta(days=7)
+                        # Create Store
+                        run_query(
+                            """
+                            INSERT INTO stores (store_name, owner_name, email, phone, distributor_code, subscription_status, plan_expiry_date)
+                            VALUES (:s_name, :o_name, :email, :phone, :dist, 'TRIAL', :expiry)
+                            """,
+                            {
+                                "s_name": s_name,
+                                "o_name": o_name,
+                                "email": s_email,
+                                "phone": s_phone,
+                                "dist": dist_code,
+                                "expiry": expiry_date
+                            }
+                        )
+                        # Fetch created store id
+                        s_df = run_query("SELECT id FROM stores WHERE email = :email", {"email": s_email})
+                        store_id = int(s_df.iloc[0]["id"])
 
-                        execute_query("""
+                        # Create Store Admin User
+                        hashed = hash_password(admin_pass)
+                        run_query(
+                            """
                             INSERT INTO users (store_id, username, password_hash, role)
-                            VALUES (:s_id, :uname, :pwd, 'OWNER');
-                        """, {"s_id": new_store_id, "uname": username, "pwd": hash_password(password)})
+                            VALUES (:s_id, :uname, :pwd, 'CHEMIST')
+                            """,
+                            {
+                                "s_id": store_id,
+                                "uname": admin_user,
+                                "pwd": hashed
+                            }
+                        )
+                        st.success("✅ Store successfully registered! Aapka 7-Day Free Trial activate ho gaya hai. Ab aap Sign In tab se login kar sakte hain.")
+                    except Exception as e:
+                        st.error(f"Registration fail hua: {e}")
 
-                        st.success(f"🎉 Store '{s_name}' register ho gaya! Chemist login details ready hain.")
-                            
-                    except Exception as err:
-                        st.error(f"Registration failed: {err}")
+    st.stop()
+
+# ----------------- SIDEBAR PROFILE & LOGOUT -----------------
+with st.sidebar:
+    st.success(f"User: **{st.session_state.user_info['username']}** ({st.session_state.user_info['role']})")
+    st.info(f"Store: **{st.session_state.user_info['store_name']}**")
+    if st.button("Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.user_info = None
+        st.rerun()
+
+user_role = st.session_state.user_info["role"]
+store_id = st.session_state.user_info["store_id"]
+
+# ----------------- MASTER ADMIN AUDIT VIEW -----------------
+if user_role == "WHOLESALER":
+    st.header("🛡️ Neelam Technologies - Central Audit & Licensing")
+    st.info("Master Alert Inbox: contact.neelamtechnologies@gmail.com")
+
+    tab1, tab2 = st.tabs(["📋 All Onboarded Stores", "⚡ Instant Plan Renewal"])
+
+    with tab1:
+        st.subheader("Distributors dwara onboard kiye gaye sabhi retail accounts:")
+        stores_df = run_query(
+            """
+            SELECT id, store_name, owner_name, email, phone, distributor_code, 
+                   subscription_status, plan_expiry_date, created_at
+            FROM stores
+            ORDER BY id DESC
+            """
+        )
+        if stores_df is not None and not stores_df.empty:
+            st.dataframe(stores_df, use_container_width=True)
+        else:
+            st.write("Abhi koi registered store nahi hai.")
+
+    with tab2:
+        st.subheader("Extend Store Subscription")
+        with st.form("renew_form"):
+            target_store_id = st.number_input("Store ID", min_value=1, step=1)
+            additional_days = st.selectbox("Plan Extension", [30, 90, 180, 365], index=0)
+            renew_btn = st.form_submit_button("Activate / Renew License", type="primary")
+            if renew_btn:
+                new_expiry = datetime.now() + timedelta(days=additional_days)
+                run_query(
+                    """
+                    UPDATE stores
+                    SET subscription_status = 'ACTIVE', plan_expiry_date = :exp
+                    WHERE id = :s_id
+                    """,
+                    {"exp": new_expiry, "s_id": target_store_id}
+                )
+                st.success(f"Store ID {target_store_id} ka subscription {additional_days} din ke liye renew ho gaya!")
+
+# ----------------- CHEMIST WORKSPACE -----------------
+else:
+    st.header(f"🏪 {st.session_state.user_info['store_name']} - Dashboard")
+
+    menu = st.selectbox("Navigation:", ["💊 Inventory & Medicine Stock", "🧾 Point of Sale (Billing)", "📊 Sales History"])
+
+    if menu == "💊 Inventory & Medicine Stock":
+        st.subheader("Medicine Inventory")
+
+        with st.expander("➕ Add New Medicine Batch"):
+            with st.form("add_med"):
+                m_name = st.text_input("Medicine Name *")
+                b_no = st.text_input("Batch Number *")
+                exp_date = st.date_input("Expiry Date *")
+                qty = st.number_input("Quantity (Strips/Units) *", min_value=1, value=10)
+                mrp = st.number_input("MRP (₹) *", min_value=0.0, value=50.0, step=0.5)
+                rate = st.number_input("Billing Rate (₹) *", min_value=0.0, value=40.0, step=0.5)
+                save_med = st.form_submit_button("Save Medicine Stock", type="primary")
+
+                if save_med:
+                    if not m_name or not b_no:
+                        st.warning("Medicine name aur Batch number zaroori hain.")
+                    else:
+                        run_query(
+                            """
+                            INSERT INTO inventory (store_id, medicine_name, batch_number, expiry_date, quantity, mrp, rate)
+                            VALUES (:s_id, :m_name, :b_no, :exp_date, :qty, :mrp, :rate)
+                            """,
+                            {
+                                "s_id": store_id,
+                                "m_name": m_name,
+                                "b_no": b_no,
+                                "exp_date": exp_date,
+                                "qty": qty,
+                                "mrp": mrp,
+                                "rate": rate
+                            }
+                        )
+                        st.success(f"{m_name} successfully stock mein jud gaya!")
+
+        inv_df = run_query(
+            "SELECT id, medicine_name, batch_number, expiry_date, quantity, mrp, rate FROM inventory WHERE store_id = :s_id ORDER BY id DESC",
+            {"s_id": store_id}
+        )
+        if inv_df is not None and not inv_df.empty:
+            st.dataframe(inv_df, use_container_width=True)
+        else:
+            st.info("Abhi stock mein koi medicine available nahi hai. Upar se add karein.")
+
+    elif menu == "🧾 Point of Sale (Billing)":
+        st.subheader("Generate Customer Invoice")
+        inv_df = run_query(
+            "SELECT id, medicine_name, batch_number, quantity, rate FROM inventory WHERE store_id = :s_id AND quantity > 0",
+            {"s_id": store_id}
+        )
+        if inv_df is not None and not inv_df.empty:
+            with st.form("pos_form"):
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    cust_name = st.text_input("Customer Name")
+                with col_c2:
+                    cust_phone = st.text_input("Customer Phone")
+
+                med_options = {f"{row['medicine_name']} (Batch: {row['batch_number']}, Stock: {row['quantity']})": row for _, row in inv_df.iterrows()}
+                selected_med_label = st.selectbox("Select Medicine", list(med_options.keys()))
+                selected_item = med_options[selected_med_label]
+
+                bill_qty = st.number_input("Quantity", min_value=1, max_value=int(selected_item["quantity"]), value=1)
+                unit_rate = st.number_input("Rate (₹)", value=float(selected_item["rate"]))
+                total = bill_qty * unit_rate
+                st.write(f"### Total Bill: ₹{total:.2f}")
+
+                generate_bill = st.form_submit_button("Print / Save Invoice", type="primary")
+                if generate_bill:
+                    inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    # Record sale
+                    run_query(
+                        """
+                        INSERT INTO sales (store_id, invoice_number, customer_name, customer_phone, total_amount)
+                        VALUES (:s_id, :inv_no, :c_name, :c_phone, :tot)
+                        """,
+                        {
+                            "s_id": store_id,
+                            "inv_no": inv_no,
+                            "c_name": cust_name,
+                            "c_phone": cust_phone,
+                            "tot": total
+                        }
+                    )
+                    # Deduct inventory
+                    run_query(
+                        "UPDATE inventory SET quantity = quantity - :b_qty WHERE id = :i_id",
+                        {"b_qty": bill_qty, "i_id": int(selected_item["id"])}
+                    )
+                    st.success(f"✅ Invoice {inv_no} generate ho gaya! Total ₹{total:.2f}")
+        else:
+            st.warning("Pehle inventory mein medicines add karein taaki billing ki ja sake.")
+
+    elif menu == "📊 Sales History":
+        st.subheader("Store Sales Register")
+        sales_df = run_query(
+            "SELECT invoice_number, customer_name, customer_phone, total_amount, created_at FROM sales WHERE store_id = :s_id ORDER BY id DESC",
+            {"s_id": store_id}
+        )
+        if sales_df is not None and not sales_df.empty:
+            st.dataframe(sales_df, use_container_width=True)
+        else:
+            st.info("Abhi tak koi sale record nahi hua hai.")
