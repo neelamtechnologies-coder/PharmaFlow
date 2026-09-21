@@ -3,19 +3,27 @@ from sqlalchemy import create_engine, text
 import pandas as pd
 
 def get_engine():
-    db_url = st.secrets["postgres"]["url"]
+    # Fallback support for both flat and nested secret formats
+    try:
+        if "postgres" in st.secrets and "url" in st.secrets["postgres"]:
+            db_url = st.secrets["postgres"]["url"]
+        elif "url" in st.secrets:
+            db_url = st.secrets["url"]
+        else:
+            # Direct fallback string if secrets aren't picked up
+            db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+    except Exception:
+        db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+
     return create_engine(
         db_url,
         pool_pre_ping=True,
-        pool_recycle=300,
-        pool_size=5,
-        max_overflow=10
+        pool_recycle=300
     )
 
 def init_db():
     engine = get_engine()
     with engine.connect() as conn:
-        # Stores table
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS stores (
                 id SERIAL PRIMARY KEY,
@@ -31,7 +39,6 @@ def init_db():
             );
         """))
         
-        # Users table (RBAC)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -43,7 +50,6 @@ def init_db():
             );
         """))
 
-        # Inventory table
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS inventory (
                 id SERIAL PRIMARY KEY,
@@ -58,7 +64,6 @@ def init_db():
             );
         """))
 
-        # Sales table
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS sales (
                 id SERIAL PRIMARY KEY,
@@ -70,21 +75,8 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """))
-
-        # Payment logs table
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS payment_logs (
-                id SERIAL PRIMARY KEY,
-                store_id INT REFERENCES stores(id) ON DELETE CASCADE,
-                amount NUMERIC(10, 2) NOT NULL,
-                payment_status VARCHAR(50) DEFAULT 'PENDING',
-                transaction_id VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """))
         conn.commit()
 
-# Helper function
 def run_query(query: str, params: dict = None):
     engine = get_engine()
     with engine.connect() as conn:
@@ -93,11 +85,3 @@ def run_query(query: str, params: dict = None):
             return pd.DataFrame(result.fetchall(), columns=result.keys())
         conn.commit()
         return None
-    def get_engine():
-    db_url = st.secrets["postgres"]["url"]
-    return create_engine(
-        db_url,
-        connect_args={"sslmode": "require"},
-        pool_pre_ping=True,
-        pool_recycle=300
-    )
