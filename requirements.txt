@@ -1,6 +1,7 @@
 streamlit
-psycopg2-binary
-sqlalchemy
 pandas
+sqlalchemy
+psycopg2-binary
+passlib
 bcrypt
 reportlab
