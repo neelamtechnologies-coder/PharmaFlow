@@ -3,20 +3,20 @@ from sqlalchemy import create_engine, text
 import pandas as pd
 
 def get_engine():
-    # Fallback support for both flat and nested secret formats
     try:
         if "postgres" in st.secrets and "url" in st.secrets["postgres"]:
             db_url = st.secrets["postgres"]["url"]
         elif "url" in st.secrets:
             db_url = st.secrets["url"]
         else:
-            # Direct fallback string if secrets aren't picked up
             db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
     except Exception:
         db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
+    # Explicit SSL connect_args to resolve cloud OperationalError
     return create_engine(
         db_url,
+        connect_args={"sslmode": "require"},
         pool_pre_ping=True,
         pool_recycle=300
     )
