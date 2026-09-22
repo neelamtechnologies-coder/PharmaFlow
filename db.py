@@ -30,8 +30,15 @@ def init_db():
     try:
         engine = get_engine()
         with engine.connect() as conn:
+            # Purani tables ko hata kar fresh schema banane ke liye DROP commands
+            conn.execute(text("DROP TABLE IF EXISTS sales CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS inventory CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS stores CASCADE;"))
+
+            # Ab nayi tables sahi columns ke sath banengi
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS stores (
+                CREATE TABLE stores (
                     id SERIAL PRIMARY KEY,
                     store_name VARCHAR(255) NOT NULL,
                     owner_name VARCHAR(255),
@@ -43,10 +50,10 @@ def init_db():
                     activation_key VARCHAR(100),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-            ;"""))
+            """))
             
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE users (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     username VARCHAR(100) UNIQUE NOT NULL,
@@ -57,7 +64,7 @@ def init_db():
             """))
 
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS inventory (
+                CREATE TABLE inventory (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     medicine_name VARCHAR(255) NOT NULL,
@@ -71,7 +78,7 @@ def init_db():
             """))
 
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS sales (
+                CREATE TABLE sales (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     invoice_number VARCHAR(100) NOT NULL,
@@ -83,7 +90,7 @@ def init_db():
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"⚠️ Database Connection Failed: {e}")
+        st.error(f"⚠️ Database Initialization Failed: {e}")
         st.stop()
 
 def run_query(query: str, params: dict = None):
