@@ -1,190 +1,159 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime
-from datetime import timedelta
-from db import run_query
-from db import init_db
-from auth import hash_password
-from auth import verify_password
+from db import init_db, run_query, hash_password
 
-st.set_page_config(
-    page_title="PharmaFlow - Cloud Medical ERP",
-    page_icon="💊",
-    layout="wide"
-)
+# Initialize Database
+init_db()
 
-try:
-    init_db()
-except Exception:
-    pass
+# Session state for authentication
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.session_state.role = ""
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "user_info" not in st.session_state:
-    st.session_state.user_info = None
+# Fetch System Config (White-Label Branding)
+config_df = run_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id FROM system_config LIMIT 1;")
+if config_df is not None and not config_df.empty:
+    COMPANY_NAME = config_df.iloc[0]["company_name"]
+    ADMIN_USER = config_df.iloc[0]["super_admin_username"]
+    ADMIN_PASS_HASH = config_df.iloc[0]["super_admin_password_hash"]
+    DEFAULT_UPI = config_df.iloc[0]["upi_id"]
+else:
+    COMPANY_NAME = "Neelam Technologies"
+    ADMIN_USER = "admin"
+    ADMIN_PASS_HASH = hash_password("admin")
+    DEFAULT_UPI = "neelamtech@upi"
 
-st.title("💊 PharmaFlow - Cloud Medical ERP")
-st.caption("A Product of Neelam Technologies | Multi-Tenant Cloud Architecture")
-st.markdown("---")
-
-if not st.session_state.logged_in:
-    auth_mode = st.radio(
-        "Chunein:",
-        ["Chemist / Admin Login", "Register New Pharmacy (7-Day Instant Trial)"],
-        horizontal=True
-    )
-
-    if auth_mode == "Chemist / Admin Login":
-        st.subheader("Login Portal")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            if st.button("Sign In", type="primary", use_container_width=True):
-                if username == "admin" and password == "admin123":
-                    st.session_state.logged_in = True
-                    st.session_state.user_info = {
-                        "username": "admin",
-                        "role": "WHOLESALER",
-                        "store_name": "Neelam Technologies HQ",
-                        "store_id": 0,
-                        "subscription_status": "ACTIVE"
-                    }
-                    st.rerun()
-                else:
-                    user_df = run_query(
-                        """
-                        SELECT u.id, u.username, u.password_hash, u.role, u.store_id,
-                               s.store_name, s.subscription_status, s.plan_expiry_date
-                        FROM users u
-                        LEFT JOIN stores s ON u.store_id = s.id
-                        WHERE u.username = :username
-                        """,
-                        {"username": username}
-                    )
-                    if user_df is not None and not user_df.empty:
-                        user = user_df.iloc[0]
-                        if verify_password(password, user["password_hash"]):
-                            if user["role"] != "WHOLESALER":
-                                expiry = pd.to_datetime(user["plan_expiry_date"])
-                                if datetime.now() > expiry:
-                                    st.error("⚠️ Aapka 7-day trial/license expire ho gaya hai.")
-                                    st.stop()
-                            st.session_state.logged_in = True
-                            st.session_state.user_info = {
-                                "username": user["username"],
-                                "role": user["role"],
-                                "store_name": user["store_name"],
-                                "store_id": user["store_id"],
-                                "subscription_status": user["subscription_status"]
-                            }
-                            st.rerun()
-                        else:
-                            st.error("Galat password!")
-                    else:
-                        st.error("User nahi mila!")
-    else:
-        st.subheader("Register Pharmacy - 7-Day Free Trial")
-        with st.form("register_store_form"):
-            s_name = st.text_input("Store / Pharmacy Name *")
-            o_name = st.text_input("Owner Full Name *")
-            s_email = st.text_input("Official Email *")
-            s_phone = st.text_input("Phone Number")
-            dist_code = st.text_input("Distributor / Referral Code (Optional)")
-            admin_user = st.text_input("Create Admin Username *")
-            admin_pass = st.text_input("Create Password *", type="password")
-            submitted = st.form_submit_button("Start 7-Day Instant Trial", type="primary")
-
-            if submitted:
-                if not s_name or not s_email or not admin_user or not admin_pass:
-                    st.warning("Kripya sabhi mandatory (*) fields bharein.")
-                else:
-                    try:
-                        expiry_date = datetime.now() + timedelta(days=7)
-                        run_query(
-                            """
-                            INSERT INTO stores (store_name, owner_name, email, phone, distributor_code, subscription_status, plan_expiry_date)
-                            VALUES (:s_name, :o_name, :email, :phone, :dist, 'TRIAL', :expiry)
-                            """,
-                            {
-                                "s_name": s_name,
-                                "o_name": o_name,
-                                "email": s_email,
-                                "phone": s_phone,
-                                "dist": dist_code,
-                                "expiry": expiry_date
-                            }
-                        )
-                        s_df = run_query("SELECT id FROM stores WHERE email = :email", {"email": s_email})
-                        store_id = int(s_df.iloc[0]["id"])
-                        hashed = hash_password(admin_pass)
-                        run_query(
-                            """
-                            INSERT INTO users (store_id, username, password_hash, role)
-                            VALUES (:s_id, :uname, :pwd, 'CHEMIST')
-                            """,
-                            {
-                                "s_id": store_id,
-                                "uname": admin_user,
-                                "pwd": hashed
-                            }
-                        )
-                        st.success("✅ Store successfully registered! Aap Sign In kar sakte hain.")
-                    except Exception as e:
-                        st.error(f"Registration fail hua: {e}")
+# --- LOGIN SCREEN ---
+if not st.session_state.authenticated:
+    st.title(f"💊 {COMPANY_NAME} - ERP Login")
+    st.markdown("### Secure Multi-Tenant Access Portal")
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
+        
+        if submit:
+            if username == ADMIN_USER and hash_password(password) == ADMIN_PASS_HASH:
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.session_state.role = "SUPER_ADMIN"
+                st.success("Login Successful!")
+                st.rerun()
+            else:
+                st.error("Invalid Username or Password!")
     st.stop()
 
-with st.sidebar:
-    st.success(f"User: **{st.session_state.user_info['username']}** ({st.session_state.user_info['role']})")
-    st.info(f"Store: **{st.session_state.user_info['store_name']}**")
-    if st.button("Logout", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.user_info = None
-        st.rerun()
+# --- MAIN DASHBOARD (AFTER LOGIN) ---
+st.sidebar.title(f"User: {st.session_state.username}")
+st.sidebar.info(f"Role: {st.session_state.role}")
+if st.sidebar.button("Logout"):
+    st.session_state.authenticated = False
+    st.rerun()
 
-user_role = st.session_state.user_info["role"]
-store_id = st.session_state.user_info["store_id"]
+st.title(f"💊 PharmaFlow - Cloud Medical ERP")
+st.subheader(f"🛡️ {COMPANY_NAME} - Central Administration & Licensing")
 
-if user_role == "WHOLESALER":
-    st.header("🛡️ Neelam Technologies - Central Audit & Licensing")
-    tab1, tab2 = st.tabs(["📋 All Onboarded Stores", "⚡ Instant Plan Renewal"])
-    with tab1:
-        stores_df = run_query("SELECT id, store_name, owner_name, email, phone, subscription_status, plan_expiry_date FROM stores ORDER BY id DESC")
-        if stores_df is not None and not stores_df.empty:
-            st.dataframe(stores_df, use_container_width=True)
-        else:
-            st.write("Abhi koi registered store nahi hai.")
-    with tab2:
-        with st.form("renew_form"):
-            target_store_id = st.number_input("Store ID", min_value=1, step=1)
-            additional_days = st.selectbox("Plan Extension", [30, 90, 180, 365], index=0)
-            if st.form_submit_button("Renew License", type="primary"):
-                new_expiry = datetime.now() + timedelta(days=additional_days)
-                run_query("UPDATE stores SET subscription_status = 'ACTIVE', plan_expiry_date = :exp WHERE id = :s_id", {"exp": new_expiry, "s_id": target_store_id})
-                st.success("Subscription renew ho gaya!")
-else:
-    st.header(f"🏪 {st.session_state.user_info['store_name']} - Dashboard")
-    menu = st.selectbox("Navigation:", ["💊 Inventory & Medicine Stock", "🧾 Point of Sale (Billing)", "📊 Sales History"])
-    if menu == "💊 Inventory & Medicine Stock":
-        with st.expander("➕ Add New Medicine"):
-            with st.form("add_med"):
-                m_name = st.text_input("Medicine Name *")
-                b_no = st.text_input("Batch Number *")
-                exp_date = st.date_input("Expiry Date *")
-                qty = st.number_input("Quantity *", min_value=1, value=10)
-                mrp = st.number_input("MRP (₹) *", min_value=0.0, value=50.0)
-                rate = st.number_input("Billing Rate (₹) *", min_value=0.0, value=40.0)
-                if st.form_submit_button("Save Stock", type="primary"):
-                    run_query("INSERT INTO inventory (store_id, medicine_name, batch_number, expiry_date, quantity, mrp, rate) VALUES (:s_id, :m_name, :b_no, :exp_date, :qty, :mrp, :rate)", {"s_id": store_id, "m_name": m_name, "b_no": b_no, "exp_date": exp_date, "qty": qty, "mrp": mrp, "rate": rate})
-                    st.success("Stock jud gaya!")
-        inv_df = run_query("SELECT medicine_name, batch_number, expiry_date, quantity, mrp, rate FROM inventory WHERE store_id = :s_id", {"s_id": store_id})
-        if inv_df is not None and not inv_df.empty:
-            st.dataframe(inv_df, use_container_width=True)
-    elif menu == "🧾 Point of Sale (Billing)":
-        st.subheader("Billing Portal")
-        st.info("Inventory se medicines select karke invoice banayein.")
-    elif menu == "📊 Sales History":
-        st.subheader("Sales Register")
-        sales_df = run_query("SELECT invoice_number, customer_name, total_amount, created_at FROM sales WHERE store_id = :s_id", {"s_id": store_id})
-        if sales_df is not None and not sales_df.empty:
-            st.dataframe(sales_df, use_container_width=True)
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📂 Onboarded Stores", 
+    "➕ Onboard Store", 
+    "🔄 Plan Renewal", 
+    "⚙️ White-Label Settings"
+])
+
+with tab1:
+    st.markdown("### Registered Medical Stores List")
+    stores_df = run_query("SELECT id, store_name, owner_name, email, phone, subscription_status, payment_status, plan_expiry_date FROM stores ORDER BY id DESC")
+    if stores_df is not None and not stores_df.empty:
+        st.dataframe(stores_df, use_container_width=True)
+    else:
+        st.info("Abhi koi registered store nahi hai.")
+
+with tab2:
+    st.markdown("### Register New Medical Store")
+    with st.form("onboard_form"):
+        store_name = st.text_input("Store Name")
+        owner_name = st.text_input("Owner Name")
+        email = st.text_input("Store Email (Unique)")
+        phone = st.text_input("Phone Number")
+        
+        st.markdown("---")
+        st.markdown("#### 💳 Payment & UPI Configuration")
+        store_upi = st.text_input("Store UPI ID (Leave blank to use default)", value=DEFAULT_UPI)
+        bank_details = st.text_area("Bank Details / IFSC")
+        
+        submitted = st.form_submit_button("Onboard Store")
+        
+        if submitted:
+            if store_name and email:
+                try:
+                    query = """
+                        INSERT INTO stores (store_name, owner_name, email, phone, upi_id, bank_details, payment_status)
+                        VALUES (:store_name, :owner_name, :email, :phone, :upi_id, :bank_details, 'PENDING')
+                    """
+                    run_query(query, {
+                        "store_name": store_name,
+                        "owner_name": owner_name,
+                        "email": email,
+                        "phone": phone,
+                        "upi_id": store_upi,
+                        "bank_details": bank_details
+                    })
+                    st.success(f"Store '{store_name}' successfully onboarded!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error registering store: {e}")
+            else:
+                st.warning("Store Name aur Email bharna anivarya hai.")
+
+with tab3:
+    st.markdown("### Instant Plan Renewal (Exact 1 Month / 1 Year Extension)")
+    stores_list = run_query("SELECT id, store_name FROM stores ORDER BY store_name ASC;")
+    
+    if stores_list is not None and not stores_list.empty:
+        store_options = {row["store_name"]: row["id"] for _, row in stores_list.iterrows()}
+        selected_store = st.selectbox("Select Store for Renewal", list(store_options.keys()))
+        store_id = store_options[selected_store]
+        
+        st.info(f"Official Payment UPI QR Handle: **{DEFAULT_UPI}**")
+        
+        renewal_type = st.radio("Select Extension Duration", ["1 Month", "1 Year"])
+        
+        if st.button("Confirm & Renew Plan"):
+            if renewal_type == "1 Month":
+                query = "UPDATE stores SET plan_expiry_date = plan_expiry_date + INTERVAL '1 month', payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = :store_id;"
+            else:
+                query = "UPDATE stores SET plan_expiry_date = plan_expiry_date + INTERVAL '1 year', payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = :store_id;"
+            
+            run_query(query, {"store_id": store_id})
+            st.success(f"Store '{selected_store}' subscription successfully extended by {renewal_type}!")
+            st.rerun()
+    else:
+        st.info("Renewal ke liye pehle koi store onboard karein.")
+
+with tab4:
+    st.markdown("### ⚙️ White-Label & Owner Profile Settings")
+    st.markdown("Yahan naya owner apni company ka naam, admin username/password, aur official payment UPI ID change kar sakta hai.")
+    
+    with st.form("settings_form"):
+        new_company = st.text_input("Company / Brand Name", value=COMPANY_NAME)
+        new_admin_user = st.text_input("Admin Username", value=ADMIN_USER)
+        new_password = st.text_input("New Admin Password (leave blank to keep current)", type="password")
+        new_upi = st.text_input("Official Business UPI ID", value=DEFAULT_UPI)
+        
+        save_settings = st.form_submit_button("Update White-Label Settings")
+        
+        if save_settings:
+            try:
+                if new_password:
+                    pass_hash = hash_password(new_password)
+                    q = "UPDATE system_config SET company_name = :c, super_admin_username = :u, super_admin_password_hash = :p, upi_id = :upi WHERE id = 1;"
+                    run_query(q, {"c": new_company, "u": new_admin_user, "p": pass_hash, "upi": new_upi})
+                else:
+                    q = "UPDATE system_config SET company_name = :c, super_admin_username = :u, upi_id = :upi WHERE id = 1;"
+                    run_query(q, {"c": new_company, "u": new_admin_user, "upi": new_upi})
+                
+                st.success("White-Label Settings successfully updated! App reboot ho rahi hai...")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error updating settings: {e}")
