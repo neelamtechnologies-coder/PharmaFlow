@@ -13,6 +13,12 @@ def get_engine():
     except Exception:
         db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn-pooler.c-3.ap-southeast-1.aws.neon.tech:6543/neondb?sslmode=require"
 
+    return create_engine(
+        db_url,
+        connect_args={"sslmode": "require", "connect_timeout": 5},
+        poolclass=NullPool
+    )
+
     # NullPool use karne se connection caching ka jhanjhat khatam ho jata hai
     return create_engine(
         db_url,
