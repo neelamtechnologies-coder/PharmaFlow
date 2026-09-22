@@ -2,7 +2,7 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 import pandas as pd
-import psycopg2
+import hashlib
 
 def get_engine():
     try:
@@ -11,7 +11,8 @@ def get_engine():
         else:
             db_url = st.secrets["url"]
     except Exception:
-        db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn-pooler.c-3.ap-southeast-1.aws.neon.tech:6543/neondb?sslmode=require"
+        # Fallback direct connection URL
+        db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
     return create_engine(
         db_url,
@@ -19,41 +20,53 @@ def get_engine():
         poolclass=NullPool
     )
 
-    # NullPool use karne se connection caching ka jhanjhat khatam ho jata hai
-    return create_engine(
-        db_url,
-        connect_args={"sslmode": "require"},
-        poolclass=NullPool
-    )
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def init_db():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            # Purani tables ko hata kar fresh schema banane ke liye DROP commands
-            conn.execute(text("DROP TABLE IF EXISTS sales CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS inventory CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS stores CASCADE;"))
-
-            # Ab nayi tables sahi columns ke sath banengi
+            # 1. System Config & Branding Table (For White-Label Reseller)
             conn.execute(text("""
-                CREATE TABLE stores (
+                CREATE TABLE IF NOT EXISTS system_config (
+                    id SERIAL PRIMARY KEY,
+                    company_name VARCHAR(255) DEFAULT 'Neelam Technologies',
+                    super_admin_username VARCHAR(100) DEFAULT 'admin',
+                    super_admin_password_hash VARCHAR(255) DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', -- default 'admin'
+                    upi_id VARCHAR(100) DEFAULT 'neelamtech@upi',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+
+            # Insert default config if empty
+            result = conn.execute(text("SELECT COUNT(*) FROM system_config;")).fetchone()
+            if result[0] == 0:
+                conn.execute(text("""
+                    INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id)
+                    VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi');
+                """))
+
+            # 2. Stores Table with White-Label Payment Status
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS stores (
                     id SERIAL PRIMARY KEY,
                     store_name VARCHAR(255) NOT NULL,
                     owner_name VARCHAR(255),
                     email VARCHAR(255) UNIQUE NOT NULL,
                     phone VARCHAR(50),
-                    distributor_code VARCHAR(50),
                     subscription_status VARCHAR(50) DEFAULT 'TRIAL',
-                    plan_expiry_date TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '7 days'),
-                    activation_key VARCHAR(100),
+                    plan_expiry_date TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '1 month'),
+                    upi_id VARCHAR(100),
+                    bank_details TEXT,
+                    payment_status VARCHAR(50) DEFAULT 'PENDING',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
-            
+
+            # 3. Users Table (Wholesalers & Retailers)
             conn.execute(text("""
-                CREATE TABLE users (
+                CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     username VARCHAR(100) UNIQUE NOT NULL,
@@ -63,8 +76,9 @@ def init_db():
                 );
             """))
 
+            # 4. Inventory Table
             conn.execute(text("""
-                CREATE TABLE inventory (
+                CREATE TABLE IF NOT EXISTS inventory (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     medicine_name VARCHAR(255) NOT NULL,
@@ -77,8 +91,9 @@ def init_db():
                 );
             """))
 
+            # 5. Sales Table
             conn.execute(text("""
-                CREATE TABLE sales (
+                CREATE TABLE IF NOT EXISTS sales (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     invoice_number VARCHAR(100) NOT NULL,
@@ -90,7 +105,7 @@ def init_db():
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"⚠️ Database Initialization Failed: {e}")
+        st.error(f"Database Initialization Failed: {e}")
         st.stop()
 
 def run_query(query: str, params: dict = None):
