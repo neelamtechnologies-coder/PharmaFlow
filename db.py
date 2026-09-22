@@ -11,7 +11,6 @@ def get_engine():
         else:
             db_url = st.secrets["url"]
     except Exception:
-        # Fallback direct connection URL
         db_url = "postgresql://neondb_owner:npg_a6hbH8qqLtIX@ep-quiet-wind-az98j8pn.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
     return create_engine(
@@ -27,19 +26,17 @@ def init_db():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            # 1. System Config & Branding Table (For White-Label Reseller)
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS system_config (
                     id SERIAL PRIMARY KEY,
                     company_name VARCHAR(255) DEFAULT 'Neelam Technologies',
                     super_admin_username VARCHAR(100) DEFAULT 'admin',
-                    super_admin_password_hash VARCHAR(255) DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', -- default 'admin'
+                    super_admin_password_hash VARCHAR(255) DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',
                     upi_id VARCHAR(100) DEFAULT 'neelamtech@upi',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
 
-            # Insert default config if empty
             result = conn.execute(text("SELECT COUNT(*) FROM system_config;")).fetchone()
             if result[0] == 0:
                 conn.execute(text("""
@@ -47,7 +44,6 @@ def init_db():
                     VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi');
                 """))
 
-            # 2. Stores Table with White-Label Payment Status
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS stores (
                     id SERIAL PRIMARY KEY,
@@ -64,7 +60,6 @@ def init_db():
                 );
             """))
 
-            # 3. Users Table (Wholesalers & Retailers)
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
@@ -72,34 +67,6 @@ def init_db():
                     username VARCHAR(100) UNIQUE NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
                     role VARCHAR(50) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """))
-
-            # 4. Inventory Table
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS inventory (
-                    id SERIAL PRIMARY KEY,
-                    store_id INT REFERENCES stores(id) ON DELETE CASCADE,
-                    medicine_name VARCHAR(255) NOT NULL,
-                    batch_number VARCHAR(100) NOT NULL,
-                    expiry_date DATE NOT NULL,
-                    quantity INT NOT NULL DEFAULT 0,
-                    mrp NUMERIC(10, 2) NOT NULL,
-                    rate NUMERIC(10, 2) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """))
-
-            # 5. Sales Table
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS sales (
-                    id SERIAL PRIMARY KEY,
-                    store_id INT REFERENCES stores(id) ON DELETE CASCADE,
-                    invoice_number VARCHAR(100) NOT NULL,
-                    customer_name VARCHAR(255),
-                    customer_phone VARCHAR(50),
-                    total_amount NUMERIC(10, 2) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
