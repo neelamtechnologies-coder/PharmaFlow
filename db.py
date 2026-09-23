@@ -26,8 +26,16 @@ def init_db():
     try:
         engine = get_engine()
         with engine.connect() as conn:
+            # Purani tables ko drop karke naye columns ke sath fresh create karna
+            conn.execute(text("DROP TABLE IF EXISTS sales CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS inventory CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS stores CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS system_config CASCADE;"))
+
+            # 1. System Config & Branding Table
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS system_config (
+                CREATE TABLE system_config (
                     id SERIAL PRIMARY KEY,
                     company_name VARCHAR(255) DEFAULT 'Neelam Technologies',
                     super_admin_username VARCHAR(100) DEFAULT 'admin',
@@ -37,15 +45,14 @@ def init_db():
                 );
             """))
 
-            result = conn.execute(text("SELECT COUNT(*) FROM system_config;")).fetchone()
-            if result[0] == 0:
-                conn.execute(text("""
-                    INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id)
-                    VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi');
-                """))
-
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS stores (
+                INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id)
+                VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi');
+            """))
+
+            # 2. Stores Table with all required columns
+            conn.execute(text("""
+                CREATE TABLE stores (
                     id SERIAL PRIMARY KEY,
                     store_name VARCHAR(255) NOT NULL,
                     owner_name VARCHAR(255),
@@ -60,13 +67,42 @@ def init_db():
                 );
             """))
 
+            # 3. Users Table
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE users (
                     id SERIAL PRIMARY KEY,
                     store_id INT REFERENCES stores(id) ON DELETE CASCADE,
                     username VARCHAR(100) UNIQUE NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
                     role VARCHAR(50) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+
+            # 4. Inventory Table
+            conn.execute(text("""
+                CREATE TABLE inventory (
+                    id SERIAL PRIMARY KEY,
+                    store_id INT REFERENCES stores(id) ON DELETE CASCADE,
+                    medicine_name VARCHAR(255) NOT NULL,
+                    batch_number VARCHAR(100) NOT NULL,
+                    expiry_date DATE NOT NULL,
+                    quantity INT NOT NULL DEFAULT 0,
+                    mrp NUMERIC(10, 2) NOT NULL,
+                    rate NUMERIC(10, 2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+
+            # 5. Sales Table
+            conn.execute(text("""
+                CREATE TABLE sales (
+                    id SERIAL PRIMARY KEY,
+                    store_id INT REFERENCES stores(id) ON DELETE CASCADE,
+                    invoice_number VARCHAR(100) NOT NULL,
+                    customer_name VARCHAR(255),
+                    customer_phone VARCHAR(50),
+                    total_amount NUMERIC(10, 2) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
