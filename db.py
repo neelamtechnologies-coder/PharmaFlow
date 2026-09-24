@@ -107,7 +107,7 @@ def init_db():
                     customer_name VARCHAR(255),
                     customer_phone VARCHAR(50),
                     total_amount NUMERIC(10, 2) NOT NULL,
-                    created_at TIMESTAMP DERIVED CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
     except Exception as e:
