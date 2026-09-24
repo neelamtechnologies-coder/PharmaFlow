@@ -15,7 +15,7 @@ def get_engine():
 
     return create_engine(
         db_url,
-        connect_args={"sslmode": "require", "connect_timeout": 5},
+        connect_args={"sslmode": "require", "connect_timeout": 10},
         poolclass=NullPool
     )
 
@@ -107,7 +107,7 @@ def init_db():
                     customer_name VARCHAR(255),
                     customer_phone VARCHAR(50),
                     total_amount NUMERIC(10, 2) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DERIVED CURRENT_TIMESTAMP
                 );
             """))
     except Exception as e:
@@ -115,10 +115,15 @@ def init_db():
         st.stop()
 
 def run_query(query: str, params: dict = None):
-    engine = get_engine()
-    with engine.connect() as conn:
-        result = conn.execute(text(query), params or {})
-        if result.returns_rows:
-            return pd.DataFrame(result.fetchall(), columns=result.keys())
-        conn.commit()  # <-- Yeh zaroori hai taaki INSERT/UPDATE queries database mein save ho sakein
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            result = conn.execute(text(query), params or {})
+            if result.returns_rows:
+                df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                return df
+            conn.commit()
+            return None
+    except Exception as e:
+        st.error(f"Database Error: {e}")
         return None
