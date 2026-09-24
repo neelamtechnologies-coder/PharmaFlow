@@ -26,16 +26,9 @@ def init_db():
     try:
         engine = get_engine()
         with engine.begin() as conn:
-            # Drop old tables to ensure clean schema recreation
-            conn.execute(text("DROP TABLE IF EXISTS sales CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS inventory CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS retailers CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS wholesalers CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS system_config CASCADE;"))
-
             # 1. System Config (Super Admin / Ultimate Owner Branding & UPI)
             conn.execute(text("""
-                CREATE TABLE system_config (
+                CREATE TABLE IF NOT EXISTS system_config (
                     id SERIAL PRIMARY KEY,
                     company_name VARCHAR(255) DEFAULT 'Neelam Technologies',
                     super_admin_username VARCHAR(100) DEFAULT 'admin',
@@ -45,14 +38,17 @@ def init_db():
                 );
             """))
 
-            conn.execute(text("""
-                INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id)
-                VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi');
-            """))
+            # Insert default config only if table is empty
+            res = conn.execute(text("SELECT COUNT(*) FROM system_config;")).scalar()
+            if res == 0:
+                conn.execute(text("""
+                    INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id)
+                    VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi');
+                """))
 
-            # 2. Wholesalers / Distributors Table (Support & Commission Tier - NO UPI)
+            # 2. Wholesalers / Distributors Table (Support & Commission Tier)
             conn.execute(text("""
-                CREATE TABLE wholesalers (
+                CREATE TABLE IF NOT EXISTS wholesalers (
                     id SERIAL PRIMARY KEY,
                     company_name VARCHAR(255) NOT NULL,
                     owner_name VARCHAR(255),
@@ -67,7 +63,7 @@ def init_db():
 
             # 3. Retailers / Medical Stores Table
             conn.execute(text("""
-                CREATE TABLE retailers (
+                CREATE TABLE IF NOT EXISTS retailers (
                     id SERIAL PRIMARY KEY,
                     wholesaler_id INT REFERENCES wholesalers(id) ON DELETE SET NULL,
                     store_name VARCHAR(255) NOT NULL,
@@ -85,7 +81,7 @@ def init_db():
 
             # 4. Inventory Table
             conn.execute(text("""
-                CREATE TABLE inventory (
+                CREATE TABLE IF NOT EXISTS inventory (
                     id SERIAL PRIMARY KEY,
                     retailer_id INT REFERENCES retailers(id) ON DELETE CASCADE,
                     medicine_name VARCHAR(255) NOT NULL,
@@ -100,7 +96,7 @@ def init_db():
 
             # 5. Sales Table
             conn.execute(text("""
-                CREATE TABLE sales (
+                CREATE TABLE IF NOT EXISTS sales (
                     id SERIAL PRIMARY KEY,
                     retailer_id INT REFERENCES retailers(id) ON DELETE CASCADE,
                     invoice_number VARCHAR(100) NOT NULL,
