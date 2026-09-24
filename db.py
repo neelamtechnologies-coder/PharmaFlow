@@ -25,8 +25,8 @@ def hash_password(password: str) -> str:
 def init_db():
     try:
         engine = get_engine()
-        with engine.connect() as conn:
-            # Drop old tables to clean up schema
+        with engine.begin() as conn:
+            # Drop old tables to ensure clean schema recreation
             conn.execute(text("DROP TABLE IF EXISTS sales CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS inventory CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS retailers CASCADE;"))
@@ -110,7 +110,6 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
-            conn.commit()
     except Exception as e:
         st.error(f"Database Initialization Failed: {e}")
         st.stop()
@@ -121,5 +120,5 @@ def run_query(query: str, params: dict = None):
         result = conn.execute(text(query), params or {})
         if result.returns_rows:
             return pd.DataFrame(result.fetchall(), columns=result.keys())
-        conn.commit()
+        conn.commit()  # <-- Yeh zaroori hai taaki INSERT/UPDATE queries database mein save ho sakein
         return None
