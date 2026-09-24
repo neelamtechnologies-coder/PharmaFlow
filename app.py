@@ -92,7 +92,6 @@ if st.session_state.role == "SUPER_ADMIN":
 
     with tab1:
         st.markdown("### Registered Distributors (Support Partners)")
-        # Fixed query without upi_id
         w_df = run_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate FROM wholesalers ORDER BY id DESC")
         if w_df is not None and not w_df.empty:
             st.dataframe(w_df, use_container_width=True)
@@ -101,7 +100,7 @@ if st.session_state.role == "SUPER_ADMIN":
 
     with tab2:
         st.markdown("### Register New Distributor")
-        with st.form("add_distributor"):
+        with st.form("add_distributor_form_unique"):  # Fixed unique form key
             c_name = st.text_input("Distributor Agency Name")
             o_name = st.text_input("Owner / Contact Person Name")
             email = st.text_input("Email (Unique)")
@@ -125,7 +124,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     except Exception as e:
                         st.error(f"Error: {e}")
                 else:
-                    st.warning("Zaroori fields bharein.")
+                    st.warning("Sabhi fields bharein.")
 
     with tab3:
         st.markdown("### All Medical Stores (Retailers in Network)")
@@ -212,7 +211,7 @@ elif st.session_state.role == "WHOLESALER":
 
     with tab2:
         st.markdown("### Register New Medical Store (Retailer)")
-        with st.form("add_retailer_form"):
+        with st.form("add_retailer_form_unique"):
             s_name = st.text_input("Medical Store Name")
             o_name = st.text_input("Retailer Owner Name")
             email = st.text_input("Retailer Email (Unique)")
