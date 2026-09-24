@@ -1,5 +1,6 @@
 import streamlit as st
 from db import init_db, run_query, hash_password
+import pandas as pd
 
 # Initialize Database
 init_db()
@@ -92,7 +93,7 @@ if st.session_state.role == "SUPER_ADMIN":
 
     with tab1:
         st.markdown("### Registered Distributors (Support Partners)")
-        w_df = run_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate FROM wholesalers ORDER BY id DESC")
+        w_df = run_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate, created_at FROM wholesalers ORDER BY id DESC;")
         if w_df is not None and not w_df.empty:
             st.dataframe(w_df, use_container_width=True)
         else:
@@ -100,7 +101,7 @@ if st.session_state.role == "SUPER_ADMIN":
 
     with tab2:
         st.markdown("### Register New Distributor")
-        with st.form("add_distributor_form_unique"):  # Fixed unique form key
+        with st.form("add_distributor_form_unique"):
             c_name = st.text_input("Distributor Agency Name")
             o_name = st.text_input("Owner / Contact Person Name")
             email = st.text_input("Email (Unique)")
@@ -132,7 +133,7 @@ if st.session_state.role == "SUPER_ADMIN":
             SELECT r.id, r.store_name, r.owner_name, r.email, r.phone, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
             FROM retailers r
             LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
-            ORDER BY r.id DESC
+            ORDER BY r.id DESC;
         """)
         if r_df is not None and not r_df.empty:
             st.dataframe(r_df, use_container_width=True)
@@ -201,7 +202,7 @@ elif st.session_state.role == "WHOLESALER":
         st.markdown("### Retailers assigned under your support network")
         my_ret = run_query("""
             SELECT id, store_name, owner_name, email, phone, subscription_status, payment_status, plan_expiry_date, created_at 
-            FROM retailers WHERE wholesaler_id = :wid ORDER BY id DESC
+            FROM retailers WHERE wholesaler_id = :wid ORDER BY id DESC;
         """, {"wid": st.session_state.user_id})
         
         if my_ret is not None and not my_ret.empty:
