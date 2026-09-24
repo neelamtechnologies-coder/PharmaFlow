@@ -2,6 +2,7 @@ streamlit
 pandas
 sqlalchemy
 psycopg2-binary
-passlib
-bcrypt
-reportlab
+google-genai
+pillow
+pypdfium2
+openpyxl
