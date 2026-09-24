@@ -97,7 +97,7 @@ if st.session_state.role == "SUPER_ADMIN":
         if w_df is not None and not w_df.empty:
             st.dataframe(w_df, use_container_width=True)
         else:
-            st.info("Abhi koi Distributor registered nahi hai.")
+            st.info("No distributors registered yet.")
 
     with tab2:
         st.markdown("### Register New Distributor")
@@ -125,7 +125,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     except Exception as e:
                         st.error(f"Error: {e}")
                 else:
-                    st.warning("Sabhi fields bharein.")
+                    st.warning("Please fill in all required fields.")
 
     with tab3:
         st.markdown("### All Medical Stores (Retailers in Network)")
@@ -138,11 +138,11 @@ if st.session_state.role == "SUPER_ADMIN":
         if r_df is not None and not r_df.empty:
             st.dataframe(r_df, use_container_width=True)
         else:
-            st.info("Abhi koi Retailer registered nahi hai.")
+            st.info("No retailers registered yet.")
 
     with tab4:
         st.markdown("### Instant Subscription Renewal (Direct Owner Payment)")
-        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}** (Paisa seedha owner ke paas aayega)")
+        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}** (Payments are collected directly by the owner)")
         
         retailers_list = run_query("SELECT id, store_name FROM retailers ORDER BY store_name ASC;")
         if retailers_list is not None and not retailers_list.empty:
@@ -162,7 +162,7 @@ if st.session_state.role == "SUPER_ADMIN":
                 st.success(f"Retailer '{sel_r}' plan successfully extended by {period}!")
                 st.rerun()
         else:
-            st.info("Renewal ke liye pehle retailer add karein.")
+            st.info("Please register a retailer before processing renewals.")
 
     with tab5:
         st.markdown("### ⚙️ White-Label Settings & Owner UPI")
@@ -180,7 +180,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     else:
                         run_query("UPDATE system_config SET company_name = :c, super_admin_username = :u, upi_id = :upi WHERE id = 1;",
                                   {"c": new_comp, "u": new_user, "upi": new_upi})
-                    st.success("Settings updated successfully! App reboot ho rahi hai...")
+                    st.success("Settings updated successfully! Rebooting application...")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -208,7 +208,7 @@ elif st.session_state.role == "WHOLESALER":
         if my_ret is not None and not my_ret.empty:
             st.dataframe(my_ret, use_container_width=True)
         else:
-            st.info("Abhi aapke under koi retailer registered nahi hai.")
+            st.info("No retailers registered under your network yet.")
 
     with tab2:
         st.markdown("### Register New Medical Store (Retailer)")
@@ -235,7 +235,7 @@ elif st.session_state.role == "WHOLESALER":
                     except Exception as e:
                         st.error(f"Error: {e}")
                 else:
-                    st.warning("Sabhi fields bharein.")
+                    st.warning("Please fill in all required fields.")
 
 # ==========================================
 # RETAILER / MEDICAL STORE DASHBOARD
@@ -264,11 +264,11 @@ elif st.session_state.role == "RETAILER":
     
     with tab1:
         st.markdown("### Plan Renewal & Secure Payment")
-        st.markdown(f"Apne plan ko renew karne ke liye niche diye gaye official owner UPI ID par payment karein.")
+        st.markdown("To renew your subscription plan, please make the payment using the official owner UPI ID provided below.")
         st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n(Direct payment to Owner)")
         
-        st.warning("Note: Day-to-day assistance aur technical help ke liye apne assigned support partner (Distributor) se sampark karein.")
+        st.warning("Note: For day-to-day assistance and technical support, please contact your assigned support partner (Distributor).")
 
     with tab2:
         st.markdown("### Store Inventory & Billing Module")
-        st.info("Yahan aapki medical store ki items, batch expiry, aur bill generation manage hogi.")
+        st.info("Manage your medical store items, batch expiration tracking, and customer billing here.")
