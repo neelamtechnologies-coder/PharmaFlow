@@ -13,7 +13,7 @@ from google.genai import types
 import hashlib
 
 # ==============================================================================
-# 🗄️ DATABASE SETUP & MULTI-TIER TABLES (With Pricing & Backup Config)
+# 🗄️ DATABASE SETUP & MULTI-TIER TABLES
 # ==============================================================================
 DB_FILE = "medical_store.db"
 
@@ -27,7 +27,6 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # 1. System Config (Super Admin / Owner with Fixed Pricing & Backup Storage ID)
     c.execute('''
         CREATE TABLE IF NOT EXISTS system_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,12 +36,11 @@ def init_db():
             upi_id TEXT DEFAULT 'neelamtech@upi',
             monthly_fee REAL DEFAULT 999.0,
             yearly_fee REAL DEFAULT 9999.0,
-            client_backup_target TEXT DEFAULT 'Not Configured (Using Default Cloud)',
+            client_backup_target TEXT DEFAULT '',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     ''')
     
-    # Check and add columns if upgrading from older schema
     c.execute("PRAGMA table_info(system_config);")
     columns = [col[1] for col in c.fetchall()]
     if "monthly_fee" not in columns:
@@ -50,16 +48,15 @@ def init_db():
     if "yearly_fee" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 9999.0;")
     if "client_backup_target" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT 'Not Configured';",)
+        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT '';")
 
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
         c.execute('''
             INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, 'Not Configured');
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, '');
         ''')
 
-    # 2. Wholesalers (Distributors)
     c.execute('''
         CREATE TABLE IF NOT EXISTS wholesalers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,7 +71,6 @@ def init_db():
         );
     ''')
 
-    # 3. Retailers (Medical Stores)
     c.execute('''
         CREATE TABLE IF NOT EXISTS retailers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +89,6 @@ def init_db():
         );
     ''')
 
-    # 4. Inventory
     c.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,7 +106,6 @@ def init_db():
         );
     ''')
 
-    # 5. Sales
     c.execute('''
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,7 +123,6 @@ def init_db():
 
 init_db()
 
-# Session State Initialization
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.username = ""
@@ -141,7 +134,6 @@ if "cart" not in st.session_state:
 if "scanned_data" not in st.session_state:
     st.session_state.scanned_data = None
 
-# Fetch System Config & Pricing
 conn = get_db_connection()
 config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target FROM system_config LIMIT 1;", conn)
 conn.close()
@@ -153,7 +145,7 @@ if not config_df.empty:
     OWNER_UPI = config_df.iloc[0]["upi_id"]
     MONTHLY_FEE = float(config_df.iloc[0]["monthly_fee"])
     YEARLY_FEE = float(config_df.iloc[0]["yearly_fee"])
-    CLIENT_BACKUP_TARGET = config_df.iloc[0]["client_backup_target"]
+    CLIENT_BACKUP_TARGET = str(config_df.iloc[0]["client_backup_target"]).strip()
 else:
     COMPANY_NAME = "Neelam Technologies"
     ADMIN_USER = "admin"
@@ -161,7 +153,7 @@ else:
     OWNER_UPI = "neelamtech@upi"
     MONTHLY_FEE = 999.0
     YEARLY_FEE = 9999.0
-    CLIENT_BACKUP_TARGET = "Not Configured"
+    CLIENT_BACKUP_TARGET = ""
 
 # ==============================================================================
 # 🔐 LOGIN SCREEN
@@ -223,6 +215,10 @@ if st.sidebar.button("Logout"):
 if st.session_state.role == "SUPER_ADMIN":
     st.title(f"💊 PharmaFlow - Owner Administration Panel")
     st.subheader(f"🛡️ {COMPANY_NAME} | Central Control & Franchise Management")
+
+    # Mandatory Backup Check Warning Banner
+    if not CLIENT_BACKUP_TARGET or CLIENT_BACKUP_TARGET == "":
+        st.error("🚨 **CRITICAL CONFIGURATION WARNING:** Client Backup Storage ID is mandatory! Until you configure a valid backup storage URL or Google Drive ID, system operations are restricted.")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📂 All Distributors", 
@@ -306,7 +302,7 @@ if st.session_state.role == "SUPER_ADMIN":
             st.info("Please register a retailer before processing renewals.")
 
     with tab5:
-        st.markdown("### ⚙️ White-Label Settings, Fixed Pricing & Client Backup")
+        st.markdown("### ⚙️ White-Label Settings, Fixed Pricing & Mandatory Backup")
         with st.form("settings_form"):
             new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
             new_user = st.text_input("Admin Username", value=ADMIN_USER)
@@ -319,29 +315,32 @@ if st.session_state.role == "SUPER_ADMIN":
             new_yearly = st.number_input("Yearly Subscription Fee (₹)", value=YEARLY_FEE)
             
             st.markdown("---")
-            st.markdown("#### ☁️ Client Backup Storage Configuration (Google Drive / Cloud ID)")
-            new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook", value=CLIENT_BACKUP_TARGET, help="Client can paste their own Google Drive sharing link or cloud storage ID here for automated backups.")
+            st.markdown("#### ☁️ MANDATORY Client Backup Storage Configuration")
+            new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook *", value=CLIENT_BACKUP_TARGET, help="Mandatory field. Client must provide their storage ID or Google Drive link.")
             
             if st.form_submit_button("Save All Settings"):
-                try:
-                    c = conn.cursor()
-                    if new_pwd:
-                        c.execute("""
-                            UPDATE system_config 
-                            SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ? 
-                            WHERE id = 1;
-                        """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_backup_target))
-                    else:
-                        c.execute("""
-                            UPDATE system_config 
-                            SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ? 
-                            WHERE id = 1;
-                        """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_backup_target))
-                    conn.commit()
-                    st.success("Settings updated successfully! Rebooting application...")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                if not new_backup_target or new_backup_target.strip() == "":
+                    st.error("Error: Client Backup Storage ID is mandatory and cannot be left blank!")
+                else:
+                    try:
+                        c = conn.cursor()
+                        if new_pwd:
+                            c.execute("""
+                                UPDATE system_config 
+                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ? 
+                                WHERE id = 1;
+                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_backup_target.strip()))
+                        else:
+                            c.execute("""
+                                UPDATE system_config 
+                                SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ? 
+                                WHERE id = 1;
+                            """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_backup_target.strip()))
+                        conn.commit()
+                        st.success("Settings updated successfully! Rebooting application...")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
     conn.close()
 
 # ==============================================================================
