@@ -1145,7 +1145,7 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: SELF-SERVICE RETAILER PLAN RENEWAL (Fixed outside form for immediate click response)
+    # TAB 7 / LAST: SELF-SERVICE RETAILER PLAN RENEWAL (Wrapped in st.form for reliable click action)
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
@@ -1153,19 +1153,22 @@ elif st.session_state.role == "RETAILER":
             st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, select your plan and activate it instantly without any manual approval!")
             st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
             
-            if r_store_type == "ENTERPRISE":
-                self_plan = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"], key="plan_choice")
-            else:
-                self_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"], key="plan_choice")
-            
-            if st.button("⚡ Pay & Instant Self-Activate Plan", type="primary", key="activate_plan_btn"):
-                c = conn.cursor()
-                if "1 Month" in self_plan:
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+            with st.form("self_renew_form"):
+                if r_store_type == "ENTERPRISE":
+                    self_plan = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
                 else:
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
-                conn.commit()
-                st.success("🎉 Payment verified & subscription successfully extended instantly!")
-                st.rerun()
+                    self_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+                
+                self_submit = st.form_submit_button("⚡ Pay & Instant Self-Activate Plan", type="primary")
+                
+                if self_submit:
+                    c = conn.cursor()
+                    if "1 Month" in self_plan:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                    else:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                    conn.commit()
+                    st.success("🎉 Payment verified & subscription successfully extended instantly!")
+                    st.rerun()
 
     conn.close()
