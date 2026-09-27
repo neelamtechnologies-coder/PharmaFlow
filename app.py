@@ -36,10 +36,10 @@ def init_db():
             super_admin_username TEXT DEFAULT 'admin',
             super_admin_password_hash TEXT DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',
             upi_id TEXT DEFAULT 'neelamtech@upi',
-            monthly_fee REAL DEFAULT 999.0,
-            yearly_fee REAL DEFAULT 9999.0,
-            enterprise_monthly_fee REAL DEFAULT 1999.0,
-            enterprise_yearly_fee REAL DEFAULT 19999.0,
+            monthly_fee REAL DEFAULT 599.0,
+            yearly_fee REAL DEFAULT 5999.0,
+            enterprise_monthly_fee REAL DEFAULT 999.0,
+            enterprise_yearly_fee REAL DEFAULT 9999.0,
             client_backup_target TEXT DEFAULT '',
             gemini_api_key TEXT DEFAULT '',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -50,13 +50,13 @@ def init_db():
     c.execute("PRAGMA table_info(system_config);")
     columns = [col[1] for col in c.fetchall()]
     if "monthly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN monthly_fee REAL DEFAULT 999.0;")
+        c.execute("ALTER TABLE system_config ADD COLUMN monthly_fee REAL DEFAULT 599.0;")
     if "yearly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 9999.0;")
+        c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 5999.0;")
     if "enterprise_monthly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_monthly_fee REAL DEFAULT 1999.0;")
+        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_monthly_fee REAL DEFAULT 999.0;")
     if "enterprise_yearly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_yearly_fee REAL DEFAULT 19999.0;")
+        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_yearly_fee REAL DEFAULT 9999.0;")
     if "client_backup_target" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT '';")
     if "gemini_api_key" not in columns:
@@ -67,7 +67,7 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute('''
             INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, 1999.0, 19999.0, '', '');
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 599.0, 5999.0, 999.0, 9999.0, '', '');
         ''')
         conn.commit()
 
@@ -191,10 +191,10 @@ else:
     ADMIN_USER = "admin"
     ADMIN_PASS_HASH = hash_password("admin")
     OWNER_UPI = "neelamtech@upi"
-    MONTHLY_FEE = 999.0
-    YEARLY_FEE = 9999.0
-    ENT_MONTHLY_FEE = 1999.0
-    ENT_YEARLY_FEE = 19999.0
+    MONTHLY_FEE = 599.0
+    YEARLY_FEE = 5999.0
+    ENT_MONTHLY_FEE = 999.0
+    ENT_YEARLY_FEE = 9999.0
     CLIENT_BACKUP_TARGET = ""
     MASTER_GEMINI_KEY = ""
 
@@ -335,7 +335,7 @@ if st.session_state.role == "SUPER_ADMIN":
         "➕ Add Distributor", 
         "🏥 All Retailers",
         "✏️ Edit / Delete Users",
-        "🔄 Renewals & Variable Pricing",
+        "🔄 Variable Pricing & Plans",
         "⚙️ White-Label & Variable Pricing Setup"
     ])
 
@@ -468,13 +468,13 @@ if st.session_state.role == "SUPER_ADMIN":
                 st.info("No retailers available to edit.")
 
     with tab5:
-        st.markdown("### Variable Subscription Pricing & Instant Renewal")
+        st.markdown("### Variable Subscription Pricing & Master Override")
         st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
         
         retailers_list = pd.read_sql_query("SELECT id, store_name, store_type FROM retailers ORDER BY store_name ASC;", conn)
         if not retailers_list.empty:
             r_opts = {f"{row['store_name']} ({row['store_type']})": row['id'] for _, row in retailers_list.iterrows()}
-            sel_r = st.selectbox("Select Retailer for Plan Renewal", list(r_opts.keys()))
+            sel_r = st.selectbox("Select Retailer for Plan Override", list(r_opts.keys()))
             r_id = r_opts[sel_r]
             
             curr_type = pd.read_sql_query("SELECT store_type FROM retailers WHERE id = ?;", conn, params=(r_id,)).iloc[0]["store_type"]
@@ -484,17 +484,17 @@ if st.session_state.role == "SUPER_ADMIN":
             else:
                 period = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
             
-            if st.button("Confirm Payment Received & Extend Plan"):
+            if st.button("⚡ Instant Activate & Extend Plan", type="primary"):
                 c = conn.cursor()
                 if "1 Month" in period:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 conn.commit()
-                st.success("Retailer plan successfully extended!")
+                st.success("Plan instantly extended without approvals!")
                 st.rerun()
         else:
-            st.info("Please register a retailer before processing renewals.")
+            st.info("Please register a retailer before processing.")
 
     with tab6:
         st.markdown("### ⚙️ White-Label & Variable Market Pricing Setup")
@@ -623,7 +623,7 @@ elif st.session_state.role == "WHOLESALER":
                     if ed_rpass:
                         c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, hash_password(ed_rpass), sel_r_id, st.session_state.user_id))
                     else:
-                        c.execute("UPDATE retailers SET store_name = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, sel_r_id, st.session_state.user_id))
+                        c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, sel_r_id, st.session_state.user_id))
                     conn.commit()
                     st.success("Retailer details updated successfully!")
                     st.rerun()
@@ -652,7 +652,7 @@ elif st.session_state.role == "RETAILER":
     support_phone = r_info.iloc[0]["support_phone"] or "N/A"
     
     st.title(f"🏥 {r_store} - Medical Store ERP ({st.session_state.terminal_type} TERMINAL)")
-    st.success(f"System Type: **{r_store_type}** | Subscription: **{r_status}** | Valid Till: **{r_expiry}**")
+    st.success(f"System Type: **{r_store_type}** | Subscription Status: **{r_status}** | Valid Till: **{r_expiry}**")
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"🛠️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
@@ -671,7 +671,7 @@ elif st.session_state.role == "RETAILER":
                 "📦 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
                 "💻 Multi-System Terminals",
-                "💳 Subscription & Renewal"
+                "💳 Self-Service Plan Renewal"
             ])
         else:
             tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -680,7 +680,7 @@ elif st.session_state.role == "RETAILER":
                 "📊 Dashboard & Alerts", 
                 "📦 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
-                "💳 Subscription & Renewal"
+                "💳 Self-Service Plan Renewal"
             ])
             tab7 = None
     
@@ -1112,14 +1112,28 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: SUBSCRIPTION & RENEWAL
+    # TAB 7 / LAST: SELF-SERVICE RETAILER PLAN RENEWAL
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
-            st.subheader("💳 Subscription & Plan Renewal")
-            st.markdown(f"To renew your subscription plan, please pay the fixed plan fee using the official owner UPI ID.")
-            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** ₹ {MONTHLY_FEE}/mo | ₹ {YEARLY_FEE}/yr\n* **Multi System Plan:** ₹ {ENT_MONTHLY_FEE}/mo | ₹ {ENT_YEARLY_FEE}/yr")
-            st.markdown(f"☁️ **Configured Client Backup Target:** `{CLIENT_BACKUP_TARGET}`")
-            st.warning("Note: For day-to-day assistance and technical support, please contact your assigned support partner (Distributor).")
+            st.subheader("💳 Self-Service Subscription & Instant Renewal")
+            st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, select your plan and activate it instantly without any manual approval!")
+            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
+            
+            with st.form("self_renew_form"):
+                if r_store_type == "ENTERPRISE":
+                    self_plan = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+                else:
+                    self_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+                
+                if st.form_submit_button("⚡ Pay & Instant Self-Activate Plan", type="primary"):
+                    c = conn.cursor()
+                    if "1 Month" in self_plan:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                    else:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                    conn.commit()
+                    st.success("🎉 Payment verified & subscription successfully extended instantly!")
+                    st.rerun()
 
     conn.close()
