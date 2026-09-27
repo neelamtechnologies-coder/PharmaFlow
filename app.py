@@ -681,54 +681,105 @@ elif st.session_state.role == "RETAILER":
 
     with tab2:
         st.subheader("🛒 Customer Billing Counter")
-        df_active = pd.read_sql_query("SELECT * FROM inventory WHERE retailer_id = ? AND quantity > 0 ORDER BY name ASC, expiry_date ASC", conn, params=(st.session_state.user_id,))
-        if not df_active.empty:
+        
+        # Customer & Reference Details Inputs
+        col_b1, col_b2, col_b3 = st.columns([2, 1.5, 1.5])
+        with col_b1:
             cust_name = st.text_input("Customer Name", value="Walk-in Customer")
             cust_phone = st.text_input("Customer Phone", value="")
+        with col_b2:
+            ref_type = st.radio("Reference Type", ["Self (OTC)", "Doctor Prescription"], horizontal=True)
+        with col_b3:
+            if ref_type == "Doctor Prescription":
+                raw_doc = st.text_input("Doctor Name (Enter name only)", value="", placeholder="e.g. Sharma")
+                doctor_ref = f"Dr. {raw_doc.strip()}" if raw_doc.strip() else ""
+            else:
+                doctor_ref = "Self (OTC Sale)"
+
+        st.markdown("---")
+
+        df_active = pd.read_sql_query("SELECT * FROM inventory WHERE retailer_id = ? AND quantity > 0 ORDER BY name ASC, expiry_date ASC", conn, params=(st.session_state.user_id,))
+        if not df_active.empty:
+            st.markdown("#### Search Medicine (Sorted A-Z & Near Expiry First)")
             
-            options = {f"{row['name']} | Batch: {row['batch']} | Exp: {row['expiry_date']} | MRP: ₹{row['price']} | Stock: {row['quantity']}": row['batch'] for _, row in df_active.iterrows()}
-            selected_display = st.selectbox("Search Medicine", list(options.keys()))
+            options = {}
+            for _, row in df_active.iterrows():
+                rx_tag = "[Rx] " if row['is_schedule_h'] == 1 else ""
+                display_str = f"{rx_tag}{row['name']} | Batch: {row['batch']} | Exp: {row['expiry_date']} | MRP: ₹{row['price']} | Stock: {row['quantity']}"
+                options[display_str] = row['batch']
+                
+            selected_display = st.selectbox("Select Medicine", list(options.keys()))
             selected_batch = options[selected_display]
             med_details = df_active[df_active['batch'] == selected_batch].iloc[0]
             
-            sell_qty = st.number_input("Quantity", min_value=1, max_value=int(med_details['quantity']), value=1)
-            if st.button("➕ Add to Bill", type="secondary"):
-                total_amt = sell_qty * float(med_details['price'])
-                st.session_state.cart.append({"batch": selected_batch, "name": med_details['name'], "mrp": float(med_details['price']), "qty": sell_qty, "net_total": total_amt})
-                st.rerun()
+            # Item details card & Quantity/Discount inputs
+            c_info, c_qty, c_disc, c_btn = st.columns([2, 1, 1, 1])
+            with c_info:
+                rx_label = "🔴 [Schedule H / Rx]" if med_details['is_schedule_h'] == 1 else "🟢 [OTC]"
+                st.info(f"**Item:** {med_details['name']} {rx_label} | **GST:** {med_details['gst_percent']}% | **Exp:** {med_details['expiry_date']}")
+            with c_qty:
+                sell_qty = st.number_input("Qty", min_value=1, max_value=int(med_details['quantity']), value=1)
+            with c_disc:
+                item_disc = st.number_input("Discount %", min_value=0.0, max_value=100.0, value=float(med_details['discount_percent']))
+            with c_btn:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("➕ Add to Bill", type="primary"):
+                    unit_price = float(med_details['price'])
+                    discounted_price = unit_price * (1 - (item_disc / 100.0))
+                    total_amt = sell_qty * discounted_price
+                    st.session_state.cart.append({
+                        "batch": selected_batch, 
+                        "name": med_details['name'], 
+                        "mrp": unit_price, 
+                        "discount_percent": item_disc,
+                        "qty": sell_qty, 
+                        "is_schedule_h": int(med_details['is_schedule_h']),
+                        "net_total": total_amt
+                    })
+                    st.success("Added!")
+                    st.rerun()
             
             if st.session_state.cart:
+                st.markdown("### 🧾 Current Bill Items")
                 cart_df = pd.DataFrame(st.session_state.cart)
                 st.dataframe(cart_df, use_container_width=True)
                 grand_total = cart_df['net_total'].sum()
                 st.markdown(f"### Grand Total: ₹ {grand_total:.2f}")
                 
-                if st.button("🖨️ Complete Sale & Print Bill", type="primary"):
+                # Check if any item in cart is Schedule H and Doctor name is missing
+                has_schedule_h_items = any(item.get('is_schedule_h', 0) == 1 for item in st.session_state.cart)
+                missing_doctor = (ref_type == "Doctor Prescription" and (not raw_doc or not raw_doc.strip()))
+                
+                if has_schedule_h_items and missing_doctor:
+                    st.error("🚨 **Mandatory Requirement:** Your cart contains Schedule H (Rx) medicine(s). You MUST select 'Doctor Prescription' and enter the Doctor's name before completing the sale and printing the bill!")
+                
+                if st.button("🖨️ Complete Sale & Print Bill", type="primary", disabled=(has_schedule_h_items and missing_doctor)):
                     invoice_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    c.execute("INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) VALUES (?, ?, ?, ?, ?)",
-                              (st.session_state.user_id, invoice_no, cust_name, cust_phone, grand_total))
+                    c.execute("""
+                        INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) 
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (st.session_state.user_id, invoice_no, cust_name, f"{cust_phone} | Ref: {ref_type} ({doctor_ref})", grand_total))
+                    
                     for item in st.session_state.cart:
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
                     st.session_state.cart = []
-                    st.success(f"Sale completed! Invoice: {invoice_no}")
+                    st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
                     st.balloons()
         else:
-            st.info("No active stock available.")
+            st.info("No active stock available in inventory.")
 
     with tab3:
         st.subheader("📊 Inventory Dashboard & Direct Editing")
         st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'. Sorted alphabetically by medicine name, with nearest expiry batches shown first.*")
         
-        # Fetch inventory and hide internal database primary key ('id') column for clean UI view
         df_inv = pd.read_sql_query("SELECT id, name, batch, quantity, min_stock, expiry_date, price, discount_percent, gst_percent, is_schedule_h FROM inventory WHERE retailer_id = ? ORDER BY name ASC, expiry_date ASC;", conn, params=(st.session_state.user_id,))
         if not df_inv.empty:
-            # Hide the technical 'id' column from the data editor view using column_config
             edited_inv_df = st.data_editor(
                 df_inv, 
                 use_container_width=True, 
                 key="inventory_editor",
-                column_config={"id": None}  # Hides the database ID column completely
+                column_config={"id": None}
             )
             
             if st.button("💾 Save Database Changes", type="primary"):
@@ -761,7 +812,7 @@ elif st.session_state.role == "RETAILER":
         st.subheader("📥 Bulk Import Inventory via Excel / CSV")
         uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
         if uploaded_csv is not None:
-            st.success("File uploaded successfully!")
+            st.success("File uploaded successful!")
 
     with tab6:
         st.subheader("💳 Subscription & Fixed Plan Renewal")
