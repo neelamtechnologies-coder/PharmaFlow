@@ -804,6 +804,10 @@ elif st.session_state.role == "RETAILER":
                     wa_text += f"*Grand Total: ₹{grand_total:.2f}*\n"
                     wa_text += f"*(You Saved: ₹{total_savings:.2f})*\n"
                     wa_text += f"Thank You for shopping with us! — Powered by {COMPANY_NAME}"
+                    
+                    encoded_wa_text = urllib.parse.quote(wa_text)
+                    clean_phone = "".join(filter(str.isdigit, cust_phone))
+                    wa_url = f"https://wa.me/91{clean_phone}?text={encoded_wa_text}" if len(clean_phone) >= 10 else "https://web.whatsapp.com"
 
                     st.session_state.last_invoice = {
                         "invoice_no": invoice_no,
@@ -815,20 +819,35 @@ elif st.session_state.role == "RETAILER":
                         "grand_total": grand_total,
                         "total_savings": total_savings,
                         "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        "wa_text": wa_text
+                        "wa_text": wa_text,
+                        "wa_url": wa_url
                     }
                     st.session_state.cart = []
                     st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
                     st.balloons()
             
-            # Printable Invoice Preview & Native Streamlit Copy Box for WhatsApp
+            # Printable Invoice Preview & Direct WhatsApp Web Button
             if st.session_state.last_invoice:
                 inv = st.session_state.last_invoice
                 st.markdown("---")
                 st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
                 
-                st.markdown("👇 **Copy the bill text below and paste it into customer's WhatsApp chat:**")
-                st.text_area("WhatsApp Bill Text", value=inv['wa_text'], height=180, key="wa_textbox")
+                # Direct Open WhatsApp Web link button
+                if inv['customer_phone'] and len(inv['customer_phone'].strip()) >= 10:
+                    st.markdown(f"""
+                    <div style="margin-bottom: 15px;">
+                        <a href="{inv['wa_url']}" target="_blank" style="text-decoration: none;">
+                            <button style="background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
+                                💬 Open WhatsApp Chat with ({inv['customer_phone']})
+                            </button>
+                        </a>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("💡 Enter a 10-digit customer phone number to enable direct WhatsApp chat opening.")
+
+                st.markdown("📋 **Or copy bill text manually:**")
+                st.text_area("WhatsApp Bill Text", value=inv['wa_text'], height=150, key="wa_textbox_manual")
 
                 # Render Printable Bill with Native JavaScript Print Dialog trigger
                 bill_html = f"""
