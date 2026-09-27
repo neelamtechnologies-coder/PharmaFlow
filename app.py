@@ -27,7 +27,6 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # 1. System Config Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS system_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +42,6 @@ def init_db():
     ''')
     conn.commit()
 
-    # Safely check and add missing columns to system_config if table already existed
     c.execute("PRAGMA table_info(system_config);")
     columns = [col[1] for col in c.fetchall()]
     if "monthly_fee" not in columns:
@@ -62,7 +60,6 @@ def init_db():
         ''')
         conn.commit()
 
-    # 2. Wholesalers Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS wholesalers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +74,6 @@ def init_db():
         );
     ''')
 
-    # 3. Retailers Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS retailers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +92,6 @@ def init_db():
         );
     ''')
 
-    # 4. Inventory Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,7 +109,6 @@ def init_db():
         );
     ''')
 
-    # 5. Sales Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -609,10 +603,20 @@ elif st.session_state.role == "RETAILER":
         uploaded_file = st.file_uploader("Upload Bill Document", type=["jpg", "jpeg", "png", "pdf"]) if upload_mode == "Upload File (JPG / PNG / PDF)" else st.camera_input("Capture Bill Photo")
             
         if uploaded_file is not None:
-            pil_image = Image.open(uploaded_file) if not uploaded_file.name.endswith(".pdf") else pdfium.PdfDocument(uploaded_file.read())[0].render(scale=2).to_pil_image()
-            st.image(pil_image, caption="Bill Preview", width=380)
+            try:
+                if uploaded_file.name.lower().endswith(".pdf"):
+                    pdf_document = pdfium.PdfDocument(uploaded_file.read())
+                    page = pdf_document[0]
+                    pil_image = page.render(scale=2).to_pil()
+                else:
+                    pil_image = Image.open(uploaded_file)
+                
+                st.image(pil_image, caption="Bill Preview", width=380)
+            except Exception as e:
+                st.error(f"Error reading file: {e}")
+                pil_image = None
             
-            if st.button("🔍 Scan Bill & Extract Stock Items", type="primary"):
+            if pil_image and st.button("🔍 Scan Bill & Extract Stock Items", type="primary"):
                 active_key = api_key or os.environ.get("GEMINI_API_KEY")
                 if not active_key:
                     st.error("Please enter Gemini API Key in the sidebar.")
