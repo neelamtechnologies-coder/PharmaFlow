@@ -38,6 +38,8 @@ def init_db():
             upi_id TEXT DEFAULT 'neelamtech@upi',
             monthly_fee REAL DEFAULT 999.0,
             yearly_fee REAL DEFAULT 9999.0,
+            enterprise_monthly_fee REAL DEFAULT 1999.0,
+            enterprise_yearly_fee REAL DEFAULT 19999.0,
             client_backup_target TEXT DEFAULT '',
             gemini_api_key TEXT DEFAULT '',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -51,6 +53,10 @@ def init_db():
         c.execute("ALTER TABLE system_config ADD COLUMN monthly_fee REAL DEFAULT 999.0;")
     if "yearly_fee" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 9999.0;")
+    if "enterprise_monthly_fee" not in columns:
+        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_monthly_fee REAL DEFAULT 1999.0;")
+    if "enterprise_yearly_fee" not in columns:
+        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_yearly_fee REAL DEFAULT 19999.0;")
     if "client_backup_target" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT '';")
     if "gemini_api_key" not in columns:
@@ -60,8 +66,8 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
         c.execute('''
-            INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target, gemini_api_key)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, '', '');
+            INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key)
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, 1999.0, 19999.0, '', '');
         ''')
         conn.commit()
 
@@ -89,11 +95,31 @@ def init_db():
             phone TEXT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
+            store_type TEXT DEFAULT 'SINGLE',
             subscription_status TEXT DEFAULT 'TRIAL',
             plan_expiry_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             payment_status TEXT DEFAULT 'PENDING',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(wholesaler_id) REFERENCES wholesalers(id) ON DELETE SET NULL
+        );
+    ''')
+
+    c.execute("PRAGMA table_info(retailers);")
+    r_columns = [col[1] for col in c.fetchall()]
+    if "store_type" not in r_columns:
+        c.execute("ALTER TABLE retailers ADD COLUMN store_type TEXT DEFAULT 'SINGLE';")
+    conn.commit()
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS store_terminals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            retailer_id INTEGER,
+            terminal_name TEXT NOT NULL,
+            terminal_type TEXT DEFAULT 'CLIENT',
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(retailer_id) REFERENCES retailers(id) ON DELETE CASCADE
         );
     ''')
 
@@ -136,6 +162,7 @@ if "authenticated" not in st.session_state:
     st.session_state.username = ""
     st.session_state.role = ""
     st.session_state.user_id = None
+    st.session_state.terminal_type = "SERVER"
 
 if "cart" not in st.session_state:
     st.session_state.cart = []
@@ -145,7 +172,7 @@ if "last_invoice" not in st.session_state:
     st.session_state.last_invoice = None
 
 conn = get_db_connection()
-config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
+config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
 conn.close()
 
 if not config_df.empty:
@@ -155,6 +182,8 @@ if not config_df.empty:
     OWNER_UPI = config_df.iloc[0]["upi_id"]
     MONTHLY_FEE = float(config_df.iloc[0]["monthly_fee"])
     YEARLY_FEE = float(config_df.iloc[0]["yearly_fee"])
+    ENT_MONTHLY_FEE = float(config_df.iloc[0]["enterprise_monthly_fee"])
+    ENT_YEARLY_FEE = float(config_df.iloc[0]["enterprise_yearly_fee"])
     CLIENT_BACKUP_TARGET = str(config_df.iloc[0]["client_backup_target"]).strip()
     MASTER_GEMINI_KEY = str(config_df.iloc[0]["gemini_api_key"]).strip()
 else:
@@ -164,6 +193,8 @@ else:
     OWNER_UPI = "neelamtech@upi"
     MONTHLY_FEE = 999.0
     YEARLY_FEE = 9999.0
+    ENT_MONTHLY_FEE = 1999.0
+    ENT_YEARLY_FEE = 19999.0
     CLIENT_BACKUP_TARGET = ""
     MASTER_GEMINI_KEY = ""
 
@@ -171,13 +202,13 @@ else:
 # 🔐 LOGIN & FORGOT PASSWORD SCREEN
 # ==============================================================================
 if not st.session_state.authenticated:
-    st.title(f"💊 {COMPANY_NAME} - ERP Portal")
+    st.title(f"💊 {COMPANY_NAME} - Enterprise ERP Portal")
     
     auth_tab1, auth_tab2 = st.tabs(["🔑 Login", "🔄 Forgot / Reset Password"])
     
     with auth_tab1:
         with st.form("login_form"):
-            username = st.text_input("Username")
+            username = st.text_input("Username (Admin / Distributor / Server / Counter)")
             password = st.text_input("Password", type="password")
             submit = st.form_submit_button("Login")
             
@@ -201,22 +232,34 @@ if not st.session_state.authenticated:
                         st.success("Distributor Login Successful!")
                         st.rerun()
                     else:
-                        r_df = pd.read_sql_query("SELECT id, store_name, password_hash FROM retailers WHERE username = ?;", conn, params=(username,))
+                        r_df = pd.read_sql_query("SELECT id, store_name, password_hash, store_type FROM retailers WHERE username = ?;", conn, params=(username,))
                         if not r_df.empty and hash_password(password) == r_df.iloc[0]["password_hash"]:
                             st.session_state.authenticated = True
                             st.session_state.username = username
                             st.session_state.role = "RETAILER"
                             st.session_state.user_id = int(r_df.iloc[0]["id"])
+                            st.session_state.terminal_type = "SERVER"
                             conn.close()
-                            st.success("Retailer Login Successful!")
+                            st.success("Retailer Server Login Successful!")
                             st.rerun()
+                        else:
+                            t_df = pd.read_sql_query("SELECT id, retailer_id, terminal_name, terminal_type, password_hash FROM store_terminals WHERE username = ?;", conn, params=(username,))
+                            if not t_df.empty and hash_password(password) == t_df.iloc[0]["password_hash"]:
+                                st.session_state.authenticated = True
+                                st.session_state.username = username
+                                st.session_state.role = "RETAILER"
+                                st.session_state.user_id = int(t_df.iloc[0]["retailer_id"])
+                                st.session_state.terminal_type = t_df.iloc[0]["terminal_type"]
+                                conn.close()
+                                st.success(f"Billing Counter ({t_df.iloc[0]['terminal_name']}) Login Successful!")
+                                st.rerun()
                 conn.close()
                 st.error("Invalid Username or Password!")
 
     with auth_tab2:
         st.markdown("### Reset Account Password")
         with st.form("forgot_pass_form"):
-            f_role = st.selectbox("Select Account Type", ["Retailer (Medical Store)", "Distributor (Wholesaler)", "Super Admin"])
+            f_role = st.selectbox("Select Account Type", ["Retailer (Medical Store Server)", "Billing Counter Terminal", "Distributor (Wholesaler)", "Super Admin"])
             f_user = st.text_input("Username / Email")
             f_new_pass = st.text_input("New Password", type="password")
             f_confirm = st.text_input("Confirm New Password", type="password")
@@ -245,6 +288,13 @@ if not st.session_state.authenticated:
                             c.execute("UPDATE wholesalers SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
                             conn.commit()
                             success_flag = True
+                    elif f_role == "Billing Counter Terminal":
+                        c.execute("SELECT id FROM store_terminals WHERE username = ?;", (f_user,))
+                        row = c.fetchone()
+                        if row:
+                            c.execute("UPDATE store_terminals SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
+                            conn.commit()
+                            success_flag = True
                     else:
                         c.execute("SELECT id FROM retailers WHERE username = ? OR email = ?;", (f_user, f_user))
                         row = c.fetchone()
@@ -262,11 +312,12 @@ if not st.session_state.authenticated:
 
 # --- SIDEBAR ---
 st.sidebar.title(f"User: {st.session_state.username}")
-st.sidebar.info(f"Role: {st.session_state.role}")
+st.sidebar.info(f"Role: {st.session_state.role} | Terminal: {st.session_state.terminal_type}")
 if st.sidebar.button("Logout"):
     st.session_state.authenticated = False
     st.session_state.user_id = None
     st.session_state.cart = []
+    st.session_state.terminal_type = "SERVER"
     st.rerun()
 
 # ==============================================================================
@@ -274,7 +325,7 @@ if st.sidebar.button("Logout"):
 # ==============================================================================
 if st.session_state.role == "SUPER_ADMIN":
     st.title(f"💊 PharmaFlow - Owner Administration Panel")
-    st.subheader(f"🛡️ {COMPANY_NAME} | Central Control & Franchise Management")
+    st.subheader(f"🛡️ {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
 
     if not CLIENT_BACKUP_TARGET or CLIENT_BACKUP_TARGET == "":
         st.error("🚨 **CRITICAL CONFIGURATION WARNING:** Client Backup Storage ID is mandatory! Until you configure a valid backup storage URL or Google Drive ID, system operations are restricted.")
@@ -284,8 +335,8 @@ if st.session_state.role == "SUPER_ADMIN":
         "➕ Add Distributor", 
         "🏥 All Retailers",
         "✏️ Edit / Delete Users",
-        "🔄 Renewals & Pricing",
-        "⚙️ White-Label & Backup Settings"
+        "🔄 Renewals & Variable Pricing",
+        "⚙️ White-Label & Variable Pricing Setup"
     ])
 
     conn = get_db_connection()
@@ -327,7 +378,7 @@ if st.session_state.role == "SUPER_ADMIN":
     with tab3:
         st.markdown("### All Medical Stores (Retailers in Network)")
         r_df = pd.read_sql_query("""
-            SELECT r.id, r.store_name, r.owner_name, r.email, r.phone, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
+            SELECT r.id, r.store_name, r.owner_name, r.email, r.phone, r.store_type, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
             FROM retailers r
             LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
             ORDER BY r.store_name ASC;
@@ -417,16 +468,21 @@ if st.session_state.role == "SUPER_ADMIN":
                 st.info("No retailers available to edit.")
 
     with tab5:
-        st.markdown("### Subscription Pricing & Instant Renewal")
-        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* Current Fixed Pricing — Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**")
+        st.markdown("### Variable Subscription Pricing & Instant Renewal")
+        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
         
-        retailers_list = pd.read_sql_query("SELECT id, store_name FROM retailers ORDER BY store_name ASC;", conn)
+        retailers_list = pd.read_sql_query("SELECT id, store_name, store_type FROM retailers ORDER BY store_name ASC;", conn)
         if not retailers_list.empty:
-            r_opts = {row["store_name"]: row["id"] for _, row in retailers_list.iterrows()}
+            r_opts = {f"{row['store_name']} ({row['store_type']})": row['id'] for _, row in retailers_list.iterrows()}
             sel_r = st.selectbox("Select Retailer for Plan Renewal", list(r_opts.keys()))
             r_id = r_opts[sel_r]
             
-            period = st.radio("Select Fixed Subscription Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+            curr_type = pd.read_sql_query("SELECT store_type FROM retailers WHERE id = ?;", conn, params=(r_id,)).iloc[0]["store_type"]
+            
+            if curr_type == "ENTERPRISE":
+                period = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+            else:
+                period = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
             
             if st.button("Confirm Payment Received & Extend Plan"):
                 c = conn.cursor()
@@ -441,7 +497,7 @@ if st.session_state.role == "SUPER_ADMIN":
             st.info("Please register a retailer before processing renewals.")
 
     with tab6:
-        st.markdown("### ⚙️ White-Label Settings, Fixed Pricing & Master AI Key")
+        st.markdown("### ⚙️ White-Label & Variable Market Pricing Setup")
         with st.form("settings_form"):
             new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
             new_user = st.text_input("Admin Username", value=ADMIN_USER)
@@ -449,9 +505,14 @@ if st.session_state.role == "SUPER_ADMIN":
             new_upi = st.text_input("Official Business UPI ID (for direct payments)", value=OWNER_UPI)
             
             st.markdown("---")
-            st.markdown("#### 💰 Fixed Subscription Pricing Control")
-            new_monthly = st.number_input("Monthly Subscription Fee (₹)", value=MONTHLY_FEE)
-            new_yearly = st.number_input("Yearly Subscription Fee (₹)", value=YEARLY_FEE)
+            st.markdown("#### 💰 Variable Subscription Pricing Control (Market-wise)")
+            st.markdown("##### 🖥️ Single System Plan")
+            new_monthly = st.number_input("Single Monthly Fee (₹)", value=MONTHLY_FEE)
+            new_yearly = st.number_input("Single Yearly Fee (₹)", value=YEARLY_FEE)
+            
+            st.markdown("##### 💻💻 Multi System (Enterprise Server/Client) Plan")
+            new_ent_monthly = st.number_input("Multi System Monthly Fee (₹)", value=ENT_MONTHLY_FEE)
+            new_ent_yearly = st.number_input("Multi System Yearly Fee (₹)", value=ENT_YEARLY_FEE)
             
             st.markdown("---")
             st.markdown("#### 🤖 Master Gemini API Key (Central Scanner Key)")
@@ -461,7 +522,7 @@ if st.session_state.role == "SUPER_ADMIN":
             st.markdown("#### ☁️ MANDATORY Client Backup Storage Configuration")
             new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook *", value=CLIENT_BACKUP_TARGET, help="Mandatory field. Client must provide their storage ID or Google Drive link.")
             
-            if st.form_submit_button("Save All Settings"):
+            if st.form_submit_button("Save All Variable Settings"):
                 if not new_backup_target or new_backup_target.strip() == "":
                     st.error("Error: Client Backup Storage ID is mandatory and cannot be left blank!")
                 else:
@@ -470,15 +531,15 @@ if st.session_state.role == "SUPER_ADMIN":
                         if new_pwd:
                             c.execute("""
                                 UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         else:
                             c.execute("""
                                 UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                                SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                            """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         conn.commit()
                         st.success("Settings updated successfully! Rebooting application...")
                         st.rerun()
@@ -503,7 +564,7 @@ elif st.session_state.role == "WHOLESALER":
     with tab1:
         st.markdown("### Retailers assigned under your support network")
         my_ret = pd.read_sql_query("""
-            SELECT id, store_name, owner_name, email, phone, subscription_status, payment_status, plan_expiry_date, created_at 
+            SELECT id, store_name, owner_name, email, phone, store_type, subscription_status, payment_status, plan_expiry_date, created_at 
             FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;
         """, conn, params=(st.session_state.user_id,))
         
@@ -513,25 +574,30 @@ elif st.session_state.role == "WHOLESALER":
             st.info("No retailers registered under your network yet.")
 
     with tab2:
-        st.markdown("### Register New Medical Store (Retailer)")
+        st.markdown("### Register New Medical Store (Single System / Multi System)")
         with st.form("add_retailer_form"):
             s_name = st.text_input("Medical Store Name")
             o_name = st.text_input("Retailer Owner Name")
             email = st.text_input("Retailer Email (Unique)")
             phone = st.text_input("Phone Number")
-            r_user = st.text_input("Retailer Login Username")
-            r_pass = st.text_input("Retailer Login Password", type="password")
+            s_type = st.selectbox("Store Architecture / System Type", [
+                f"SINGLE (Single System Setup — ₹{MONTHLY_FEE}/mo, ₹{YEARLY_FEE}/yr)", 
+                f"ENTERPRISE (Multi System Server/Client Setup — ₹{ENT_MONTHLY_FEE}/mo, ₹{ENT_YEARLY_FEE}/yr)"
+            ])
+            r_user = st.text_input("Main Server Username")
+            r_pass = st.text_input("Main Server Password", type="password")
             
             if st.form_submit_button("Register Store"):
                 if s_name and email and r_user and r_pass:
                     try:
                         c = conn.cursor()
+                        store_category = "ENTERPRISE" if "ENTERPRISE" in s_type else "SINGLE"
                         c.execute("""
-                            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, username, password_hash)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (st.session_state.user_id, s_name, o_name, email, phone, r_user, hash_password(r_pass)))
+                            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (st.session_state.user_id, s_name, o_name, email, phone, store_category, r_user, hash_password(r_pass)))
                         conn.commit()
-                        st.success(f"Retailer '{s_name}' successfully added to your support network!")
+                        st.success(f"Retailer '{s_name}' ({store_category}) successfully added to your support network!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
@@ -566,12 +632,12 @@ elif st.session_state.role == "WHOLESALER":
     conn.close()
 
 # ==============================================================================
-# 🏥 RETAILER / MEDICAL STORE FULL ERP DASHBOARD
+# 🏥 RETAILER / MEDICAL STORE FULL ERP DASHBOARD (SERVER vs CLIENT TERMINAL)
 # ==============================================================================
 elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
     r_info = pd.read_sql_query("""
-        SELECT r.store_name, r.subscription_status, r.plan_expiry_date, r.payment_status, w.company_name as support_partner, w.phone as support_phone
+        SELECT r.store_name, r.store_type, r.subscription_status, r.plan_expiry_date, r.payment_status, w.company_name as support_partner, w.phone as support_phone
         FROM retailers r
         LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
         WHERE r.id = ?;
@@ -579,109 +645,131 @@ elif st.session_state.role == "RETAILER":
     conn.close()
     
     r_store = r_info.iloc[0]["store_name"]
+    r_store_type = r_info.iloc[0]["store_type"]
     r_status = r_info.iloc[0]["subscription_status"]
     r_expiry = r_info.iloc[0]["plan_expiry_date"]
     support_partner = r_info.iloc[0]["support_partner"] or "Direct Neelam Technologies"
     support_phone = r_info.iloc[0]["support_phone"] or "N/A"
     
-    st.title(f"🏥 {r_store} - Medical Store Management System")
-    st.success(f"Subscription Status: **{r_status}** | Valid Till: **{r_expiry}**")
+    st.title(f"🏥 {r_store} - Medical Store ERP ({st.session_state.terminal_type} TERMINAL)")
+    st.success(f"System Type: **{r_store_type}** | Subscription: **{r_status}** | Valid Till: **{r_expiry}**")
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"🛠️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📸 Scan & Upload Bill",
-        "🛒 Customer Billing", 
-        "📊 Dashboard & Alerts", 
-        "📦 90-Day Expiry Return",
-        "📥 Excel/CSV Import", 
-        "💳 Subscription & Renewal"
-    ])
+    # --- ROLE SEGREGATION: SERVER vs CLIENT ---
+    if st.session_state.terminal_type == "CLIENT":
+        tabs = st.tabs(["🛒 Customer Billing Counter (POS Terminal)"])
+        tab2 = tabs[0]
+        tab1, tab3, tab4, tab5, tab6, tab7 = None, None, None, None, None, None
+    else:
+        if r_store_type == "ENTERPRISE":
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+                "📸 Scan & Upload Bill",
+                "🛒 Customer Billing", 
+                "📊 Dashboard & Alerts", 
+                "📦 90-Day Expiry Return",
+                "📥 Excel/CSV Import", 
+                "💻 Multi-System Terminals",
+                "💳 Subscription & Renewal"
+            ])
+        else:
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "📸 Scan & Upload Bill",
+                "🛒 Customer Billing", 
+                "📊 Dashboard & Alerts", 
+                "📦 90-Day Expiry Return",
+                "📥 Excel/CSV Import", 
+                "💳 Subscription & Renewal"
+            ])
+            tab7 = None
     
     conn = get_db_connection()
     c = conn.cursor()
 
-    with tab1:
-        st.subheader("📸 Upload Wholesaler Bill for Stock Entry")
-        upload_mode = st.radio("File Source", ["Upload File (JPG / PNG / PDF)", "Capture from Webcam"], horizontal=True)
-        
-        uploaded_file = st.file_uploader("Upload Bill Document", type=["jpg", "jpeg", "png", "pdf"]) if upload_mode == "Upload File (JPG / PNG / PDF)" else st.camera_input("Capture Bill Photo")
+    # TAB 1: SCAN & UPLOAD BILL
+    if tab1 is not None:
+        with tab1:
+            st.subheader("📸 Upload Wholesaler Bill for Stock Entry")
+            upload_mode = st.radio("File Source", ["Upload File (JPG / PNG / PDF)", "Capture from Webcam"], horizontal=True)
             
-        if uploaded_file is not None:
-            try:
-                if uploaded_file.name.lower().endswith(".pdf"):
-                    pdf_document = pdfium.PdfDocument(uploaded_file.read())
-                    page = pdf_document[0]
-                    pil_image = page.render(scale=2).to_pil()
-                else:
-                    pil_image = Image.open(uploaded_file)
+            uploaded_file = st.file_uploader("Upload Bill Document", type=["jpg", "jpeg", "png", "pdf"]) if upload_mode == "Upload File (JPG / PNG / PDF)" else st.camera_input("Capture Bill Photo")
                 
-                st.image(pil_image, caption="Bill Preview", width=380)
-            except Exception as e:
-                st.error(f"Error reading file: {e}")
-                pil_image = None
-            
-            if pil_image and st.button("🔍 Scan Bill & Extract Stock Items", type="primary"):
-                active_key = MASTER_GEMINI_KEY or os.environ.get("GEMINI_API_KEY")
-                if not active_key:
-                    st.error("Master Gemini API Key is not configured by Admin in White-Label settings.")
-                else:
-                    with st.spinner("AI is scanning the bill..."):
-                        try:
-                            client = genai.Client(api_key=active_key)
-                            prompt = "Extract medicine items with name, batch, quantity, price, expiry_date (YYYY-MM-DD), discount_percent, gst_percent, is_schedule_h (0 or 1). Return ONLY valid JSON array."
-                            response = client.models.generate_content(
-                                model='gemini-3.8-flash',
-                                contents=[pil_image, prompt],
-                                config=types.GenerateContentConfig(response_mime_type="application/json")
-                            )
-                            st.session_state.scanned_data = pd.DataFrame(json.loads(response.text))
-                            st.success("Scan complete!")
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-        
-        if st.session_state.scanned_data is not None:
-            st.markdown("---")
-            st.markdown("### ✍️ Review Scanned Items")
-            edited_scanned_df = st.data_editor(st.session_state.scanned_data, use_container_width=True)
-            
-            if st.button("📥 Confirm & Save to Inventory Stock", type="primary"):
-                for _, r in edited_scanned_df.iterrows():
-                    med_name = str(r['name']).upper().strip()
-                    batch_no = str(r['batch']).upper().strip()
-                    qty_add = int(r['quantity'])
-                    exp_dt = str(r['expiry_date'])
-                    price_val = float(r['price'])
-                    disc_val = float(r['discount_percent']) if pd.notnull(r['discount_percent']) and r['discount_percent'] != '' else 0.0
-                    gst_val = float(r['gst_percent']) if pd.notnull(r['gst_percent']) and r['gst_percent'] != '' else 12.0
-                    sched_val = int(r['is_schedule_h']) if pd.notnull(r['is_schedule_h']) and r['is_schedule_h'] != '' else 0
-                    
-                    c.execute("""
-                        SELECT id, quantity FROM inventory 
-                        WHERE retailer_id = ? AND batch = ? AND name = ?;
-                    """, (st.session_state.user_id, batch_no, med_name))
-                    existing_item = c.fetchone()
-                    
-                    if existing_item:
-                        item_id, current_qty = existing_item[0], existing_item[1]
-                        new_qty = current_qty + qty_add
-                        c.execute("""
-                            UPDATE inventory 
-                            SET quantity = ?, price = ?, expiry_date = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ? 
-                            WHERE id = ?;
-                        """, (new_qty, price_val, exp_dt, disc_val, gst_val, sched_val, item_id))
+            if uploaded_file is not None:
+                try:
+                    if uploaded_file.name.lower().endswith(".pdf"):
+                        pdf_document = pdfium.PdfDocument(uploaded_file.read())
+                        page = pdf_document[0]
+                        pil_image = page.render(scale=2).to_pil()
                     else:
-                        c.execute("""
-                            INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (st.session_state.user_id, med_name, batch_no, qty_add, exp_dt, price_val, disc_val, gst_val, sched_val))
+                        pil_image = Image.open(uploaded_file)
+                    
+                    st.image(pil_image, caption="Bill Preview", width=380)
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+                    pil_image = None
                 
-                conn.commit()
-                st.session_state.scanned_data = None
-                st.success("🎉 Stock successfully saved and updated without duplicates!")
-                st.rerun()
+                if pil_image and st.button("🔍 Scan Bill & Extract Stock Items", type="primary"):
+                    active_key = MASTER_GEMINI_KEY or os.environ.get("GEMINI_API_KEY")
+                    if not active_key:
+                        st.error("Master Gemini API Key is not configured by Admin in White-Label settings.")
+                    else:
+                        with st.spinner("AI is scanning the bill..."):
+                            try:
+                                client = genai.Client(api_key=active_key)
+                                prompt = "Extract medicine items with name, batch, quantity, price, expiry_date (YYYY-MM-DD), discount_percent, gst_percent, is_schedule_h (0 or 1). Return ONLY valid JSON array."
+                                response = client.models.generate_content(
+                                    model='gemini-3.8-flash',
+                                    contents=[pil_image, prompt],
+                                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                                )
+                                st.session_state.scanned_data = pd.DataFrame(json.loads(response.text))
+                                st.success("Scan complete!")
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+            
+            if st.session_state.scanned_data is not None:
+                st.markdown("---")
+                st.markdown("### ✍️ Review Scanned Items")
+                edited_scanned_df = st.data_editor(st.session_state.scanned_data, use_container_width=True)
+                
+                if st.button("📥 Confirm & Save to Inventory Stock", type="primary"):
+                    for _, r in edited_scanned_df.iterrows():
+                        med_name = str(r['name']).upper().strip()
+                        batch_no = str(r['batch']).upper().strip()
+                        qty_add = int(r['quantity'])
+                        exp_dt = str(r['expiry_date'])
+                        price_val = float(r['price'])
+                        disc_val = float(r['discount_percent']) if pd.notnull(r['discount_percent']) and r['discount_percent'] != '' else 0.0
+                        gst_val = float(r['gst_percent']) if pd.notnull(r['gst_percent']) and r['gst_percent'] != '' else 12.0
+                        sched_val = int(r['is_schedule_h']) if pd.notnull(r['is_schedule_h']) and r['is_schedule_h'] != '' else 0
+                        
+                        c.execute("""
+                            SELECT id, quantity FROM inventory 
+                            WHERE retailer_id = ? AND batch = ? AND name = ?;
+                        """, (st.session_state.user_id, batch_no, med_name))
+                        existing_item = c.fetchone()
+                        
+                        if existing_item:
+                            item_id, current_qty = existing_item[0], existing_item[1]
+                            new_qty = current_qty + qty_add
+                            c.execute("""
+                                UPDATE inventory 
+                                SET quantity = ?, price = ?, expiry_date = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ? 
+                                WHERE id = ?;
+                            """, (new_qty, price_val, exp_dt, disc_val, gst_val, sched_val, item_id))
+                        else:
+                            c.execute("""
+                                INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (st.session_state.user_id, med_name, batch_no, qty_add, exp_dt, price_val, disc_val, gst_val, sched_val))
+                    
+                    conn.commit()
+                    st.session_state.scanned_data = None
+                    st.success("🎉 Stock successfully saved and updated without duplicates!")
+                    st.rerun()
 
+    # TAB 2: CUSTOMER BILLING
     with tab2:
         st.subheader("🛒 Customer Billing Counter")
         
@@ -708,7 +796,6 @@ elif st.session_state.role == "RETAILER":
 
         st.markdown("---")
 
-        # Query unique inventory items grouped by name and batch to prevent duplicate dropdown rows
         df_active = pd.read_sql_query("""
             SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
                    MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
@@ -799,7 +886,6 @@ elif st.session_state.role == "RETAILER":
                     """, (st.session_state.user_id, invoice_no, cust_name, f"{cust_phone} | Ref: {ref_type} ({doctor_ref})", grand_total))
                     
                     for item in st.session_state.cart:
-                        # Deduct quantity safely by batch matching
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
                     
@@ -914,84 +1000,126 @@ elif st.session_state.role == "RETAILER":
         else:
             st.info("No active stock available in inventory.")
 
-    with tab3:
-        st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
-        
-        df_inv = pd.read_sql_query("""
-            SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
-                   MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
-                   MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h 
-            FROM inventory 
-            WHERE retailer_id = ? 
-            GROUP BY name, batch 
-            ORDER BY name ASC, expiry_date ASC;
-        """, conn, params=(st.session_state.user_id,))
-        
-        if not df_inv.empty:
-            df_inv.index = range(1, len(df_inv) + 1)
-
-            low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
+    # TAB 3: DASHBOARD
+    if tab3 is not None:
+        with tab3:
+            st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
             
-            if not low_stock_df.empty:
-                st.error(f"🚨 **Low Stock Alert:** Found {len(low_stock_df)} medicine(s) running low on stock! Please check below.")
-                st.dataframe(low_stock_df[['name', 'batch', 'quantity', 'min_stock', 'expiry_date', 'price']], use_container_width=True)
-                st.markdown("---")
-
-            st.markdown("### 📋 Complete Inventory Catalog")
-            st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'.*")
+            df_inv = pd.read_sql_query("""
+                SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
+                       MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
+                       MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h 
+                FROM inventory 
+                WHERE retailer_id = ? 
+                GROUP BY name, batch 
+                ORDER BY name ASC, expiry_date ASC;
+            """, conn, params=(st.session_state.user_id,))
             
-            def highlight_low_stock(row):
-                if row['quantity'] <= row['min_stock']:
-                    return ['background-color: #ffe6e6; color: #900'] * len(row)
-                return [''] * len(row)
+            if not df_inv.empty:
+                df_inv.index = range(1, len(df_inv) + 1)
 
-            styled_df = df_inv.style.apply(highlight_low_stock, axis=1)
+                low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
+                
+                if not low_stock_df.empty:
+                    st.error(f"🚨 **Low Stock Alert:** Found {len(low_stock_df)} medicine(s) running low on stock! Please check below.")
+                    st.dataframe(low_stock_df[['name', 'batch', 'quantity', 'min_stock', 'expiry_date', 'price']], use_container_width=True)
+                    st.markdown("---")
 
-            edited_inv_df = st.data_editor(
-                styled_df, 
-                use_container_width=True, 
-                key="inventory_editor",
-                column_config={"id": None}
-            )
+                st.markdown("### 📋 Complete Inventory Catalog")
+                st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'.*")
+                
+                def highlight_low_stock(row):
+                    if row['quantity'] <= row['min_stock']:
+                        return ['background-color: #ffe6e6; color: #900'] * len(row)
+                    return [''] * len(row)
+
+                styled_df = df_inv.style.apply(highlight_low_stock, axis=1)
+
+                edited_inv_df = st.data_editor(
+                    styled_df, 
+                    use_container_width=True, 
+                    key="inventory_editor",
+                    column_config={"id": None}
+                )
+                
+                if st.button("💾 Save Database Changes", type="primary"):
+                    try:
+                        for _, row in edited_inv_df.iterrows():
+                            c.execute("""
+                                UPDATE inventory 
+                                SET name = ?, batch = ?, quantity = ?, min_stock = ?, price = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ?, expiry_date = ?
+                                WHERE id = ? AND retailer_id = ?;
+                            """, (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
+                        conn.commit()
+                        st.success("Inventory updated successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving changes: {e}")
+            else:
+                st.info("No inventory items found.")
+
+    # TAB 4: NEAR EXPIRY
+    if tab4 is not None:
+        with tab4:
+            st.subheader("📦 90-Day Near Expiry Stock")
+            expiry_limit = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+            df_exp = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, expiry_limit))
+            if not df_exp.empty:
+                df_exp.index = range(1, len(df_exp) + 1)
+                st.dataframe(df_exp, use_container_width=True)
+                st.warning("⚠️ Near expiry items identified for distributor return.")
+            else:
+                st.success("No near-expiry items found.")
+
+    # TAB 5: EXCEL IMPORT
+    if tab5 is not None:
+        with tab5:
+            st.subheader("📥 Bulk Import Inventory via Excel / CSV")
+            uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
+            if uploaded_csv is not None:
+                st.success("File uploaded successfully!")
+
+    # TAB 6: MULTI SYSTEM TERMINAL MANAGEMENT
+    if tab7 is not None:
+        with tab6:
+            st.subheader("💻 Multi-System Terminal Management (Server / Client Counters)")
+            st.markdown("Add separate login credentials for additional billing counters (Client Terminals). Client terminals will only have access to the Customer Billing Counter.")
             
-            if st.button("💾 Save Database Changes", type="primary"):
-                try:
-                    for _, row in edited_inv_df.iterrows():
-                        c.execute("""
-                            UPDATE inventory 
-                            SET name = ?, batch = ?, quantity = ?, min_stock = ?, price = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ?, expiry_date = ?
-                            WHERE id = ? AND retailer_id = ?;
-                        """, (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
-                    conn.commit()
-                    st.success("Inventory updated successfully!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error saving changes: {e}")
-        else:
-            st.info("No inventory items found.")
+            with st.form("add_terminal_form"):
+                t_name = st.text_input("Counter / Terminal Name (e.g. Counter 2, Ground Floor POS)")
+                t_user = st.text_input("Terminal Login Username")
+                t_pass = st.text_input("Terminal Password", type="password")
+                
+                if st.form_submit_button("Create Billing Counter Terminal"):
+                    if t_name and t_user and t_pass:
+                        try:
+                            c.execute("""
+                                INSERT INTO store_terminals (retailer_id, terminal_name, terminal_type, username, password_hash)
+                                VALUES (?, ?, 'CLIENT', ?, ?)
+                            """, (st.session_state.user_id, t_name, t_user.strip(), hash_password(t_pass)))
+                            conn.commit()
+                            st.success(f"Billing Counter '{t_name}' successfully created!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error creating terminal: {e}")
+                    else:
+                        st.warning("Please fill in all required fields.")
+            
+            st.markdown("### Existing Billing Counters")
+            terminals_df = pd.read_sql_query("SELECT id, terminal_name, username, created_at FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not terminals_df.empty:
+                st.dataframe(terminals_df, use_container_width=True)
+            else:
+                st.info("No additional billing counters registered yet.")
 
-    with tab4:
-        st.subheader("📦 90-Day Near Expiry Stock")
-        expiry_limit = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
-        df_exp = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, expiry_limit))
-        if not df_exp.empty:
-            df_exp.index = range(1, len(df_exp) + 1)
-            st.dataframe(df_exp, use_container_width=True)
-            st.warning("⚠️ Near expiry items identified for distributor return.")
-        else:
-            st.success("No near-expiry items found.")
-
-    with tab5:
-        st.subheader("📥 Bulk Import Inventory via Excel / CSV")
-        uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
-        if uploaded_csv is not None:
-            st.success("File uploaded successfully!")
-
-    with tab6:
-        st.subheader("💳 Subscription & Fixed Plan Renewal")
-        st.markdown(f"To renew your subscription plan, please pay the fixed plan fee using the official owner UPI ID.")
-        st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Monthly Plan:** ₹ {MONTHLY_FEE} | **Yearly Plan:** ₹ {YEARLY_FEE}")
-        st.markdown(f"☁️ **Configured Client Backup Target:** `{CLIENT_BACKUP_TARGET}`")
-        st.warning("Note: For day-to-day assistance and technical support, please contact your assigned support partner (Distributor).")
+    # TAB 7 / LAST: SUBSCRIPTION & RENEWAL
+    target_sub_tab = tab7 if tab7 is not None else tab6
+    if target_sub_tab is not None:
+        with target_sub_tab:
+            st.subheader("💳 Subscription & Plan Renewal")
+            st.markdown(f"To renew your subscription plan, please pay the fixed plan fee using the official owner UPI ID.")
+            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** ₹ {MONTHLY_FEE}/mo | ₹ {YEARLY_FEE}/yr\n* **Multi System Plan:** ₹ {ENT_MONTHLY_FEE}/mo | ₹ {ENT_YEARLY_FEE}/yr")
+            st.markdown(f"☁️ **Configured Client Backup Target:** `{CLIENT_BACKUP_TARGET}`")
+            st.warning("Note: For day-to-day assistance and technical support, please contact your assigned support partner (Distributor).")
 
     conn.close()
