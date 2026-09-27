@@ -720,9 +720,16 @@ elif st.session_state.role == "RETAILER":
         st.subheader("📊 Inventory Dashboard & Direct Editing")
         st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'. Sorted alphabetically by medicine name, with nearest expiry batches shown first.*")
         
+        # Fetch inventory and hide internal database primary key ('id') column for clean UI view
         df_inv = pd.read_sql_query("SELECT id, name, batch, quantity, min_stock, expiry_date, price, discount_percent, gst_percent, is_schedule_h FROM inventory WHERE retailer_id = ? ORDER BY name ASC, expiry_date ASC;", conn, params=(st.session_state.user_id,))
         if not df_inv.empty:
-            edited_inv_df = st.data_editor(df_inv, use_container_width=True, key="inventory_editor")
+            # Hide the technical 'id' column from the data editor view using column_config
+            edited_inv_df = st.data_editor(
+                df_inv, 
+                use_container_width=True, 
+                key="inventory_editor",
+                column_config={"id": None}  # Hides the database ID column completely
+            )
             
             if st.button("💾 Save Database Changes", type="primary"):
                 try:
