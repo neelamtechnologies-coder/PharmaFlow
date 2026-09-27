@@ -890,7 +890,7 @@ elif st.session_state.role == "RETAILER":
                     }}
                 </script>
                 <div style="text-align: center; margin-top: 15px;">
-                    <button onclick="printBusiness()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;" onclick="printBill()">
+                    <button onclick="printBill()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
                         🖨️ Select Printer & Print Thermal Slip
                     </button>
                 </div>
@@ -906,7 +906,6 @@ elif st.session_state.role == "RETAILER":
     with tab3:
         st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
         
-        # Query unique inventory items grouped by name and batch
         df_inv = pd.read_sql_query("""
             SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
                    MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
@@ -918,7 +917,9 @@ elif st.session_state.role == "RETAILER":
         """, conn, params=(st.session_state.user_id,))
         
         if not df_inv.empty:
-            # Separate Low Stock items for dedicated alert panel
+            # Set index to start from 1 instead of 0
+            df_inv.index = range(1, len(df_inv) + 1)
+
             low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
             
             if not low_stock_df.empty:
@@ -964,6 +965,7 @@ elif st.session_state.role == "RETAILER":
         expiry_limit = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
         df_exp = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, expiry_limit))
         if not df_exp.empty:
+            df_exp.index = range(1, len(df_exp) + 1)
             st.dataframe(df_exp, use_container_width=True)
             st.warning("⚠️ Near expiry items identified for distributor return.")
         else:
