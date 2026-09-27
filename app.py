@@ -501,9 +501,10 @@ if st.session_state.role == "SUPER_ADMIN":
             if st.button("⚡ Instant Activate & Extend Plan", type="primary"):
                 c = conn.cursor()
                 if "1 Month" in period:
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                    # Extend from current expiry or now + 7 days + 1 month
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+7 days', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 else:
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+7 days', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 conn.commit()
                 st.success("Plan instantly extended without approvals!")
                 st.rerun()
@@ -606,12 +607,13 @@ elif st.session_state.role == "WHOLESALER":
                     try:
                         c = conn.cursor()
                         store_category = "ENTERPRISE" if "ENTERPRISE" in s_type else "SINGLE"
+                        # Set initial plan expiry to 7 days from now for trial
                         c.execute("""
-                            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+7 days'))
                         """, (st.session_state.user_id, s_name, o_name, email, phone, store_category, r_user, hash_password(r_pass)))
                         conn.commit()
-                        st.success(f"Retailer '{s_name}' ({store_category}) successfully added to your support network!")
+                        st.success(f"Retailer '{s_name}' ({store_category}) successfully added with 7 days free trial!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
@@ -658,7 +660,7 @@ elif st.session_state.role == "WHOLESALER":
                         c = conn.cursor()
                         c.execute("DELETE FROM retailers WHERE id = ? AND wholesaler_id = ?;", (sel_r_id, st.session_state.user_id))
                         conn.commit()
-                        st.success("Retailer successfully deleted!")
+                        st.success("Retailer successfully deleted as plan is in Trial, Pending, or Expired!")
                         st.rerun()
                     else:
                         st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription. You can only delete retailers whose plan is in Trial, Pending, or has Expired.")
@@ -1147,12 +1149,12 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: SELF-SERVICE RETAILER PLAN RENEWAL (Fixed form submission)
+    # TAB 7 / LAST: SELF-SERVICE RETAILER PLAN RENEWAL (Strict Payment Verification & Trial + Month Logic)
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
             st.subheader("💳 Self-Service Subscription & Instant Renewal")
-            st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, select your plan and activate it instantly without any manual approval!")
+            st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, select your plan and activate it instantly!")
             st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
             
             with st.form("self_renew_form"):
@@ -1161,16 +1163,21 @@ elif st.session_state.role == "RETAILER":
                 else:
                     self_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
                 
+                payment_done_checkbox = st.checkbox("✅ I have successfully transferred the payment to the official UPI ID.")
                 self_submit = st.form_submit_button("⚡ Pay & Instant Self-Activate Plan", type="primary")
                 
                 if self_submit:
-                    c = conn.cursor()
-                    if "1 Month" in self_plan:
-                        c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                    if not payment_done_checkbox:
+                        st.error("❌ Please confirm payment by checking the box before activating your plan!")
                     else:
-                        c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
-                    conn.commit()
-                    st.success("🎉 Payment verified & subscription successfully extended instantly!")
-                    st.rerun()
+                        c = conn.cursor()
+                        # Extend from current expiry or now + 1 month/year
+                        if "1 Month" in self_plan:
+                            c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                        else:
+                            c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                        conn.commit()
+                        st.success("🎉 Payment verified & subscription successfully extended instantly!")
+                        st.rerun()
 
     conn.close()
