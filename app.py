@@ -826,13 +826,11 @@ elif st.session_state.role == "RETAILER":
                     st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
                     st.balloons()
             
-            # Printable Invoice Preview & Direct WhatsApp Web Button
             if st.session_state.last_invoice:
                 inv = st.session_state.last_invoice
                 st.markdown("---")
                 st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
                 
-                # Direct Open WhatsApp Web link button
                 if inv['customer_phone'] and len(inv['customer_phone'].strip()) >= 10:
                     st.markdown(f"""
                     <div style="margin-bottom: 15px;">
@@ -849,7 +847,6 @@ elif st.session_state.role == "RETAILER":
                 st.markdown("📋 **Or copy bill text manually:**")
                 st.text_area("WhatsApp Bill Text", value=inv['wa_text'], height=150, key="wa_textbox_manual")
 
-                # Render Printable Bill with Native JavaScript Print Dialog trigger
                 bill_html = f"""
                 <div id="printable-bill" style="background-color: #ffffff; color: #000000; padding: 25px; border-radius: 8px; font-family: monospace; max-width: 450px; margin: auto; border: 1px solid #ccc;">
                     <h2 style="text-align: center; margin: 0;">🏥 {inv['store_name']}</h2>
@@ -893,7 +890,7 @@ elif st.session_state.role == "RETAILER":
                     }}
                 </script>
                 <div style="text-align: center; margin-top: 15px;">
-                    <button onclick="printBill()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
+                    <button onclick="printBusiness()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;" onclick="printBill()">
                         🖨️ Select Printer & Print Thermal Slip
                     </button>
                 </div>
@@ -907,13 +904,40 @@ elif st.session_state.role == "RETAILER":
             st.info("No active stock available in inventory.")
 
     with tab3:
-        st.subheader("📊 Inventory Dashboard & Direct Editing")
-        st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'. Sorted alphabetically by medicine name, with nearest expiry batches shown first.*")
+        st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
         
-        df_inv = pd.read_sql_query("SELECT id, name, batch, quantity, min_stock, expiry_date, price, discount_percent, gst_percent, is_schedule_h FROM inventory WHERE retailer_id = ? ORDER BY name ASC, expiry_date ASC;", conn, params=(st.session_state.user_id,))
+        # Query unique inventory items grouped by name and batch
+        df_inv = pd.read_sql_query("""
+            SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
+                   MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
+                   MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h 
+            FROM inventory 
+            WHERE retailer_id = ? 
+            GROUP BY name, batch 
+            ORDER BY name ASC, expiry_date ASC;
+        """, conn, params=(st.session_state.user_id,))
+        
         if not df_inv.empty:
+            # Separate Low Stock items for dedicated alert panel
+            low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
+            
+            if not low_stock_df.empty:
+                st.error(f"🚨 **Low Stock Alert:** Found {len(low_stock_df)} medicine(s) running low on stock! Please check below.")
+                st.dataframe(low_stock_df[['name', 'batch', 'quantity', 'min_stock', 'expiry_date', 'price']], use_container_width=True)
+                st.markdown("---")
+
+            st.markdown("### 📋 Complete Inventory Catalog")
+            st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'.*")
+            
+            def highlight_low_stock(row):
+                if row['quantity'] <= row['min_stock']:
+                    return ['background-color: #ffe6e6; color: #900'] * len(row)
+                return [''] * len(row)
+
+            styled_df = df_inv.style.apply(highlight_low_stock, axis=1)
+
             edited_inv_df = st.data_editor(
-                df_inv, 
+                styled_df, 
                 use_container_width=True, 
                 key="inventory_editor",
                 column_config={"id": None}
@@ -954,7 +978,7 @@ elif st.session_state.role == "RETAILER":
     with tab6:
         st.subheader("💳 Subscription & Fixed Plan Renewal")
         st.markdown(f"To renew your subscription plan, please pay the fixed plan fee using the official owner UPI ID.")
-        st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Monthly Plan:** ₹ {MONTHLY_FEE}\n* **Yearly Plan:** ₹ {YEARLY_FEE}")
+        st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Monthly Plan:** ₹ {MONTHLY_FEE} | **Yearly Plan:** ₹ {YEARLY_FEE}")
         st.markdown(f"☁️ **Configured Client Backup Target:** `{CLIENT_BACKUP_TARGET}`")
         st.warning("Note: For day-to-day assistance and technical support, please contact your assigned support partner (Distributor).")
 
