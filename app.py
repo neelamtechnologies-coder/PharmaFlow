@@ -37,6 +37,7 @@ def init_db():
             monthly_fee REAL DEFAULT 999.0,
             yearly_fee REAL DEFAULT 9999.0,
             client_backup_target TEXT DEFAULT '',
+            gemini_api_key TEXT DEFAULT '',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     ''')
@@ -50,13 +51,15 @@ def init_db():
         c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 9999.0;")
     if "client_backup_target" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT '';")
+    if "gemini_api_key" not in columns:
+        c.execute("ALTER TABLE system_config ADD COLUMN gemini_api_key TEXT DEFAULT '';")
     conn.commit()
 
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
         c.execute('''
-            INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, '');
+            INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target, gemini_api_key)
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, '', '');
         ''')
         conn.commit()
 
@@ -138,7 +141,7 @@ if "scanned_data" not in st.session_state:
     st.session_state.scanned_data = None
 
 conn = get_db_connection()
-config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target FROM system_config LIMIT 1;", conn)
+config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
 conn.close()
 
 if not config_df.empty:
@@ -149,6 +152,7 @@ if not config_df.empty:
     MONTHLY_FEE = float(config_df.iloc[0]["monthly_fee"])
     YEARLY_FEE = float(config_df.iloc[0]["yearly_fee"])
     CLIENT_BACKUP_TARGET = str(config_df.iloc[0]["client_backup_target"]).strip()
+    MASTER_GEMINI_KEY = str(config_df.iloc[0]["gemini_api_key"]).strip()
 else:
     COMPANY_NAME = "Neelam Technologies"
     ADMIN_USER = "admin"
@@ -157,6 +161,7 @@ else:
     MONTHLY_FEE = 999.0
     YEARLY_FEE = 9999.0
     CLIENT_BACKUP_TARGET = ""
+    MASTER_GEMINI_KEY = ""
 
 # ==============================================================================
 # 🔐 LOGIN & FORGOT PASSWORD SCREEN
@@ -433,7 +438,7 @@ if st.session_state.role == "SUPER_ADMIN":
             st.info("Please register a retailer before processing renewals.")
 
     with tab6:
-        st.markdown("### ⚙️ White-Label Settings, Fixed Pricing & Mandatory Backup")
+        st.markdown("### ⚙️ White-Label Settings, Fixed Pricing & Master AI Key")
         with st.form("settings_form"):
             new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
             new_user = st.text_input("Admin Username", value=ADMIN_USER)
@@ -445,6 +450,10 @@ if st.session_state.role == "SUPER_ADMIN":
             new_monthly = st.number_input("Monthly Subscription Fee (₹)", value=MONTHLY_FEE)
             new_yearly = st.number_input("Yearly Subscription Fee (₹)", value=YEARLY_FEE)
             
+            st.markdown("---")
+            st.markdown("#### 🤖 Master Gemini API Key (Central Scanner Key)")
+            new_gemini_key = st.text_input("Gemini API Key", value=MASTER_GEMINI_KEY, type="password", help="Enter your Google AI Studio API key here so all retailers can use the AI bill scanner automatically.")
+
             st.markdown("---")
             st.markdown("#### ☁️ MANDATORY Client Backup Storage Configuration")
             new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook *", value=CLIENT_BACKUP_TARGET, help="Mandatory field. Client must provide their storage ID or Google Drive link.")
@@ -458,15 +467,15 @@ if st.session_state.role == "SUPER_ADMIN":
                         if new_pwd:
                             c.execute("""
                                 UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ? 
+                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_backup_target.strip()))
+                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         else:
                             c.execute("""
                                 UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ? 
+                                SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_backup_target.strip()))
+                            """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         conn.commit()
                         st.success("Settings updated successfully! Rebooting application...")
                         st.rerun()
@@ -578,12 +587,6 @@ elif st.session_state.role == "RETAILER":
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"🛠️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
     
-    st.sidebar.markdown("---")
-    st.sidebar.header("⚙️ AI Bill Scanner Settings")
-    api_key = st.sidebar.text_input("Gemini API Key", type="password")
-    if api_key:
-        os.environ["GEMINI_API_KEY"] = api_key
-
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📸 Scan & Upload Bill",
         "🛒 Customer Billing", 
@@ -617,9 +620,9 @@ elif st.session_state.role == "RETAILER":
                 pil_image = None
             
             if pil_image and st.button("🔍 Scan Bill & Extract Stock Items", type="primary"):
-                active_key = api_key or os.environ.get("GEMINI_API_KEY")
+                active_key = MASTER_GEMINI_KEY or os.environ.get("GEMINI_API_KEY")
                 if not active_key:
-                    st.error("Please enter Gemini API Key in the sidebar.")
+                    st.error("Master Gemini API Key is not configured by Admin in White-Label settings.")
                 else:
                     with st.spinner("AI is scanning the bill..."):
                         try:
