@@ -287,7 +287,7 @@ if st.session_state.role == "SUPER_ADMIN":
     conn = get_db_connection()
     with tab1:
         st.markdown("### Registered Distributors (Support Partners)")
-        w_df = pd.read_sql_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate, created_at FROM wholesalers ORDER BY id DESC;", conn)
+        w_df = pd.read_sql_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate, created_at FROM wholesalers ORDER BY company_name ASC;", conn)
         if not w_df.empty:
             st.dataframe(w_df, use_container_width=True)
         else:
@@ -326,7 +326,7 @@ if st.session_state.role == "SUPER_ADMIN":
             SELECT r.id, r.store_name, r.owner_name, r.email, r.phone, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
             FROM retailers r
             LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
-            ORDER BY r.id DESC;
+            ORDER BY r.store_name ASC;
         """, conn)
         if not r_df.empty:
             st.dataframe(r_df, use_container_width=True)
@@ -501,7 +501,7 @@ elif st.session_state.role == "WHOLESALER":
         st.markdown("### Retailers assigned under your support network")
         my_ret = pd.read_sql_query("""
             SELECT id, store_name, owner_name, email, phone, subscription_status, payment_status, plan_expiry_date, created_at 
-            FROM retailers WHERE wholesaler_id = ? ORDER BY id DESC;
+            FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;
         """, conn, params=(st.session_state.user_id,))
         
         if not my_ret.empty:
@@ -645,27 +645,48 @@ elif st.session_state.role == "RETAILER":
             
             if st.button("📥 Confirm & Save to Inventory Stock", type="primary"):
                 for _, r in edited_scanned_df.iterrows():
-                    disc = float(r['discount_percent']) if pd.notnull(r['discount_percent']) and r['discount_percent'] != '' else 0.0
-                    gst = float(r['gst_percent']) if pd.notnull(r['gst_percent']) and r['gst_percent'] != '' else 12.0
-                    sched = int(r['is_schedule_h']) if pd.notnull(r['is_schedule_h']) and r['is_schedule_h'] != '' else 0
+                    med_name = str(r['name']).upper().strip()
+                    batch_no = str(r['batch']).upper().strip()
+                    qty_add = int(r['quantity'])
+                    exp_dt = str(r['expiry_date'])
+                    price_val = float(r['price'])
+                    disc_val = float(r['discount_percent']) if pd.notnull(r['discount_percent']) and r['discount_percent'] != '' else 0.0
+                    gst_val = float(r['gst_percent']) if pd.notnull(r['gst_percent']) and r['gst_percent'] != '' else 12.0
+                    sched_val = int(r['is_schedule_h']) if pd.notnull(r['is_schedule_h']) and r['is_schedule_h'] != '' else 0
                     
                     c.execute("""
-                        INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (st.session_state.user_id, str(r['name']).upper(), str(r['batch']).upper(), int(r['quantity']), str(r['expiry_date']), float(r['price']), disc, gst, sched))
+                        SELECT id, quantity FROM inventory 
+                        WHERE retailer_id = ? AND batch = ? AND name = ?;
+                    """, (st.session_state.user_id, batch_no, med_name))
+                    existing_item = c.fetchone()
+                    
+                    if existing_item:
+                        item_id, current_qty = existing_item[0], existing_item[1]
+                        new_qty = current_qty + qty_add
+                        c.execute("""
+                            UPDATE inventory 
+                            SET quantity = ?, price = ?, expiry_date = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ? 
+                            WHERE id = ?;
+                        """, (new_qty, price_val, exp_dt, disc_val, gst_val, sched_val, item_id))
+                    else:
+                        c.execute("""
+                            INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (st.session_state.user_id, med_name, batch_no, qty_add, exp_dt, price_val, disc_val, gst_val, sched_val))
+                
                 conn.commit()
                 st.session_state.scanned_data = None
-                st.success("🎉 Stock successfully added!")
+                st.success("🎉 Stock successfully saved and updated without duplicates!")
                 st.rerun()
 
     with tab2:
         st.subheader("🛒 Customer Billing Counter")
-        df_active = pd.read_sql_query("SELECT * FROM inventory WHERE retailer_id = ? AND quantity > 0 ORDER BY name ASC", conn, params=(st.session_state.user_id,))
+        df_active = pd.read_sql_query("SELECT * FROM inventory WHERE retailer_id = ? AND quantity > 0 ORDER BY name ASC, expiry_date ASC", conn, params=(st.session_state.user_id,))
         if not df_active.empty:
             cust_name = st.text_input("Customer Name", value="Walk-in Customer")
             cust_phone = st.text_input("Customer Phone", value="")
             
-            options = {f"{row['name']} | Batch: {row['batch']} | MRP: ₹{row['price']} | Stock: {row['quantity']}": row['batch'] for _, row in df_active.iterrows()}
+            options = {f"{row['name']} | Batch: {row['batch']} | Exp: {row['expiry_date']} | MRP: ₹{row['price']} | Stock: {row['quantity']}": row['batch'] for _, row in df_active.iterrows()}
             selected_display = st.selectbox("Search Medicine", list(options.keys()))
             selected_batch = options[selected_display]
             med_details = df_active[df_active['batch'] == selected_batch].iloc[0]
@@ -696,17 +717,33 @@ elif st.session_state.role == "RETAILER":
             st.info("No active stock available.")
 
     with tab3:
-        st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
-        df_inv = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        st.subheader("📊 Inventory Dashboard & Direct Editing")
+        st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'. Sorted alphabetically by medicine name, with nearest expiry batches shown first.*")
+        
+        df_inv = pd.read_sql_query("SELECT id, name, batch, quantity, min_stock, expiry_date, price, discount_percent, gst_percent, is_schedule_h FROM inventory WHERE retailer_id = ? ORDER BY name ASC, expiry_date ASC;", conn, params=(st.session_state.user_id,))
         if not df_inv.empty:
-            st.dataframe(df_inv, use_container_width=True)
+            edited_inv_df = st.data_editor(df_inv, use_container_width=True, key="inventory_editor")
+            
+            if st.button("💾 Save Database Changes", type="primary"):
+                try:
+                    for _, row in edited_inv_df.iterrows():
+                        c.execute("""
+                            UPDATE inventory 
+                            SET name = ?, batch = ?, quantity = ?, min_stock = ?, price = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ?, expiry_date = ?
+                            WHERE id = ? AND retailer_id = ?;
+                        """, (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
+                    conn.commit()
+                    st.success("Inventory updated successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error saving changes: {e}")
         else:
             st.info("No inventory items found.")
 
     with tab4:
         st.subheader("📦 90-Day Near Expiry Stock")
         expiry_limit = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
-        df_exp = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0;", conn, params=(st.session_state.user_id, expiry_limit))
+        df_exp = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, expiry_limit))
         if not df_exp.empty:
             st.dataframe(df_exp, use_container_width=True)
             st.warning("⚠️ Near expiry items identified for distributor return.")
