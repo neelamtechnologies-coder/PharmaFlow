@@ -821,21 +821,14 @@ elif st.session_state.role == "RETAILER":
                     st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
                     st.balloons()
             
-            # Printable Invoice Preview & One-Click Copy Bill Text for WhatsApp
+            # Printable Invoice Preview & Native Streamlit Copy Box for WhatsApp
             if st.session_state.last_invoice:
                 inv = st.session_state.last_invoice
                 st.markdown("---")
                 st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
                 
-                # One-Click Copy Bill Text Component for WhatsApp
-                escaped_wa_text = json.dumps(inv['wa_text'])
-                st.markdown(f"""
-                <div style="margin-bottom: 15px;">
-                    <button onclick='navigator.clipboard.writeText({escaped_wa_text}); alert("✅ Bill text copied to clipboard! Open WhatsApp and press Ctrl+V to send to customer.");' style="background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
-                        📋 Copy Bill Text for WhatsApp ({inv['customer_phone'] if inv['customer_phone'] else "No Phone"})
-                    </button>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown("👇 **Copy the bill text below and paste it into customer's WhatsApp chat:**")
+                st.text_area("WhatsApp Bill Text", value=inv['wa_text'], height=180, key="wa_textbox")
 
                 # Render Printable Bill with Native JavaScript Print Dialog trigger
                 bill_html = f"""
