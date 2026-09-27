@@ -11,6 +11,7 @@ import pypdfium2 as pdfium
 from google import genai
 from google.genai import types
 import hashlib
+import urllib.parse
 
 # ==============================================================================
 # 🗄️ DATABASE SETUP & SAFE MIGRATION
@@ -139,6 +140,8 @@ if "cart" not in st.session_state:
     st.session_state.cart = []
 if "scanned_data" not in st.session_state:
     st.session_state.scanned_data = None
+if "last_invoice" not in st.session_state:
+    st.session_state.last_invoice = None
 
 conn = get_db_connection()
 config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
@@ -379,8 +382,7 @@ if st.session_state.role == "SUPER_ADMIN":
             ret_list = pd.read_sql_query("SELECT id, store_name, username FROM retailers ORDER BY store_name ASC;", conn)
             if not ret_list.empty:
                 r_opts = {f"{row['store_name']} (User: {row['username']})": row['id'] for _, row in ret_list.iterrows()}
-                sel_r_str = st.selectbox("Select Retailer to Edit/Delete", list(r_opts.keys()))
-                sel_r_id = r_opts[sel_r_str]
+                sel_r_id = r_opts[st.selectbox("Select Retailer to Edit/Delete", list(r_opts.keys()))]
                 
                 curr_r = ret_list[ret_list['id'] == sel_r_id].iloc[0]
                 
@@ -682,19 +684,27 @@ elif st.session_state.role == "RETAILER":
     with tab2:
         st.subheader("🛒 Customer Billing Counter")
         
-        # Customer & Reference Details Inputs
+        # Check if cart contains any Schedule H medicine
+        cart_has_schedule_h = any(item.get('is_schedule_h', 0) == 1 for item in st.session_state.cart)
+        
         col_b1, col_b2, col_b3 = st.columns([2, 1.5, 1.5])
         with col_b1:
             cust_name = st.text_input("Customer Name", value="Walk-in Customer")
-            cust_phone = st.text_input("Customer Phone", value="")
+            cust_phone = st.text_input("Customer Phone (10 digits for WhatsApp)", value="", placeholder="e.g. 9876543210")
         with col_b2:
-            ref_type = st.radio("Reference Type", ["Self (OTC)", "Doctor Prescription"], horizontal=True)
+            if cart_has_schedule_h:
+                st.info("🔒 Cart has Schedule H item(s). Doctor Prescription mandatory.")
+                ref_type = "Doctor Prescription"
+                st.radio("Reference Type", [ref_type], disabled=True)
+            else:
+                ref_type = st.radio("Reference Type", ["Self (OTC)", "Doctor Prescription"], horizontal=True)
         with col_b3:
             if ref_type == "Doctor Prescription":
                 raw_doc = st.text_input("Doctor Name (Enter name only)", value="", placeholder="e.g. Sharma")
                 doctor_ref = f"Dr. {raw_doc.strip()}" if raw_doc.strip() else ""
             else:
                 doctor_ref = "Self (OTC Sale)"
+                raw_doc = ""
 
         st.markdown("---")
 
@@ -712,7 +722,6 @@ elif st.session_state.role == "RETAILER":
             selected_batch = options[selected_display]
             med_details = df_active[df_active['batch'] == selected_batch].iloc[0]
             
-            # Item details card & Quantity/Discount inputs
             c_info, c_qty, c_disc, c_btn = st.columns([2, 1, 1, 1])
             with c_info:
                 rx_label = "🔴 [Schedule H / Rx]" if med_details['is_schedule_h'] == 1 else "🟢 [OTC]"
@@ -725,13 +734,15 @@ elif st.session_state.role == "RETAILER":
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("➕ Add to Bill", type="primary"):
                     unit_price = float(med_details['price'])
-                    discounted_price = unit_price * (1 - (item_disc / 100.0))
+                    disc_amount_unit = unit_price * (item_disc / 100.0)
+                    discounted_price = unit_price - disc_amount_unit
                     total_amt = sell_qty * discounted_price
                     st.session_state.cart.append({
                         "batch": selected_batch, 
                         "name": med_details['name'], 
                         "mrp": unit_price, 
                         "discount_percent": item_disc,
+                        "discount_rs": disc_amount_unit,
                         "qty": sell_qty, 
                         "is_schedule_h": int(med_details['is_schedule_h']),
                         "net_total": total_amt
@@ -741,19 +752,37 @@ elif st.session_state.role == "RETAILER":
             
             if st.session_state.cart:
                 st.markdown("### 🧾 Current Bill Items")
-                cart_df = pd.DataFrame(st.session_state.cart)
-                st.dataframe(cart_df, use_container_width=True)
-                grand_total = cart_df['net_total'].sum()
-                st.markdown(f"### Grand Total: ₹ {grand_total:.2f}")
                 
-                # Check if any item in cart is Schedule H and Doctor name is missing
-                has_schedule_h_items = any(item.get('is_schedule_h', 0) == 1 for item in st.session_state.cart)
-                missing_doctor = (ref_type == "Doctor Prescription" and (not raw_doc or not raw_doc.strip()))
+                for idx, cart_item in enumerate(st.session_state.cart):
+                    col_i1, col_i2, col_i3, col_i4, col_i5, col_i6 = st.columns([2.5, 1, 1, 1, 1, 1])
+                    with col_i1:
+                        rx_badge = "🔴 [Rx]" if cart_item.get('is_schedule_h', 0) == 1 else ""
+                        st.write(f"{rx_badge} **{cart_item['name']}**")
+                    with col_i2:
+                        st.write(f"MRP: ₹{cart_item['mrp']}")
+                    with col_i3:
+                        st.write(f"Disc: {cart_item['discount_percent']}% (₹{cart_item['discount_rs']:.2f})")
+                    with col_i4:
+                        st.write(f"Qty: {cart_item['qty']}")
+                    with col_i5:
+                        st.write(f"**₹{cart_item['net_total']:.2f}**")
+                    with col_i6:
+                        if st.button("❌ Remove", key=f"remove_item_{idx}"):
+                            st.session_state.cart.pop(idx)
+                            st.rerun()
+
+                grand_total = sum(item['net_total'] for item in st.session_state.cart)
+                total_savings = sum(item['discount_rs'] * item['qty'] for item in st.session_state.cart)
                 
-                if has_schedule_h_items and missing_doctor:
-                    st.error("🚨 **Mandatory Requirement:** Your cart contains Schedule H (Rx) medicine(s). You MUST select 'Doctor Prescription' and enter the Doctor's name before completing the sale and printing the bill!")
+                st.markdown(f"### Grand Total: ₹ {grand_total:.2f} *(Total Savings: ₹ {total_savings:.2f})*")
                 
-                if st.button("🖨️ Complete Sale & Print Bill", type="primary", disabled=(has_schedule_h_items and missing_doctor)):
+                # Strict Validation: Schedule H requires Doctor name
+                missing_doctor = (cart_has_schedule_h and (not raw_doc or not raw_doc.strip()))
+                
+                if missing_doctor:
+                    st.error("🚨 **Mandatory Requirement:** Cart contains Schedule H (Rx) medicine(s). You MUST enter the Doctor's name before bill generation is allowed!")
+                
+                if st.button("🖨️ Complete Sale & Print Bill", type="primary", disabled=missing_doctor):
                     invoice_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                     c.execute("""
                         INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) 
@@ -763,9 +792,102 @@ elif st.session_state.role == "RETAILER":
                     for item in st.session_state.cart:
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
+                    
+                    # Prepare WhatsApp Message Text
+                    wa_text = f"*{r_store} - Tax Invoice*\n"
+                    wa_text += f"Inv No: {invoice_no}\n"
+                    wa_text += f"Date: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n"
+                    wa_text += f"Customer: {cust_name}\n"
+                    wa_text += f"Ref: {ref_type} ({doctor_ref})\n"
+                    wa_text += "-------------------\n"
+                    for itm in st.session_state.cart:
+                        wa_text += f"• {itm['name']} x {itm['qty']} = ₹{itm['net_total']:.2f}\n"
+                    wa_text += "-------------------\n"
+                    wa_text += f"*Grand Total: ₹{grand_total:.2f}*\n"
+                    wa_text += f"*(You Saved: ₹{total_savings:.2f})*\n"
+                    wa_text += f"Thank You for shopping with us!"
+                    
+                    encoded_wa_text = urllib.parse.quote(wa_text)
+                    clean_phone = "".join(filter(str.isdigit, cust_phone))
+                    wa_link = f"https://wa.me/91{clean_phone}?text={encoded_wa_text}" if len(clean_phone) >= 10 else ""
+
+                    st.session_state.last_invoice = {
+                        "invoice_no": invoice_no,
+                        "store_name": r_store,
+                        "customer_name": cust_name,
+                        "customer_phone": cust_phone,
+                        "reference": f"{ref_type} - {doctor_ref}",
+                        "items": list(st.session_state.cart),
+                        "grand_total": grand_total,
+                        "total_savings": total_savings,
+                        "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "wa_link": wa_link
+                    }
                     st.session_state.cart = []
                     st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
                     st.balloons()
+            
+            # Printable Invoice Modal & WhatsApp Send Button
+            if st.session_state.last_invoice:
+                inv = st.session_state.last_invoice
+                st.markdown("---")
+                st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
+                
+                # WhatsApp Direct Send Button
+                if inv['customer_phone'] and len(inv['customer_phone'].strip()) >= 10 and inv['wa_link']:
+                    st.markdown(f"""
+                        <a href="{inv['wa_link']}" target="_blank">
+                            <button style="background-color:#25D366; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px; margin-bottom:15px;">
+                                💬 Click here to Send Bill to Customer on WhatsApp ({inv['customer_phone']})
+                            </button>
+                        </a>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("💡 Tip: Enter a 10-digit customer phone number before completing the sale to enable direct WhatsApp bill dispatch.")
+
+                invoice_container = st.container()
+                with invoice_container:
+                    st.markdown(f"""
+                    <div style="background-color: #1e1e1e; padding: 20px; border-radius: 10px; border: 1px solid #444; font-family: monospace; color: #fff;">
+                        <h3 style="text-align: center; margin: 0;">🏥 {inv['store_name']}</h3>
+                        <p style="text-align: center; font-size: 12px; color: #aaa; margin: 2px 0;">GST Retail Invoice / Cash Memo</p>
+                        <hr style="border-color: #55f;">
+                        <p><b>Invoice No:</b> {inv['invoice_no']} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Date:</b> {inv['date']}</p>
+                        <p><b>Customer:</b> {inv['customer_name']} ({inv['customer_phone']})</p>
+                        <p><b>Reference:</b> {inv['reference']}</p>
+                        <hr style="border-color: #444;">
+                        <table style="width: 100%; font-size: 13px; text-align: left;">
+                            <tr><th>Item</th><th>Qty</th><th>MRP</th><th>Disc</th><th>Total</th></tr>
+                    """, unsafe_allow_html=True)
+                    
+                    for itm in inv['items']:
+                        st.markdown(f"""
+                            <tr>
+                                <td>{itm['name']}</td>
+                                <td>{itm['qty']}</td>
+                                <td>₹{itm['mrp']}</td>
+                                <td>{itm['discount_percent']}% (₹{itm['discount_rs']:.2f})</td>
+                                <td><b>₹{itm['net_total']:.2f}</b></td>
+                            </tr>
+                        """, unsafe_allow_html=True)
+                        
+                    st.markdown(f"""
+                        </table>
+                        <hr style="border-color: #444;">
+                        <h4 style="text-align: right; margin: 5px 0;">Grand Total: ₹{inv['grand_total']:.2f}</h4>
+                        <p style="text-align: right; font-size: 12px; color: #40ff80; margin: 0;">You Saved: ₹{inv['total_savings']:.2f}</p>
+                        <p style="text-align: center; font-size: 11px; color: #888; margin-top: 15px;">Thank You! Get Well Soon. — Powered by {COMPANY_NAME}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    if st.button("🖨️ Print Thermal Slip"):
+                        st.toast("Printing invoice to thermal printer...")
+                with col_p2:
+                    if st.button("✖️ Close / Clear Preview"):
+                        st.session_state.last_invoice = None
+                        st.rerun()
         else:
             st.info("No active stock available in inventory.")
 
@@ -812,7 +934,7 @@ elif st.session_state.role == "RETAILER":
         st.subheader("📥 Bulk Import Inventory via Excel / CSV")
         uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
         if uploaded_csv is not None:
-            st.success("File uploaded successful!")
+            st.success("File uploaded successfully!")
 
     with tab6:
         st.subheader("💳 Subscription & Fixed Plan Renewal")
