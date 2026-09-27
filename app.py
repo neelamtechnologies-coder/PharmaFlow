@@ -629,7 +629,7 @@ elif st.session_state.role == "RETAILER":
                             client = genai.Client(api_key=active_key)
                             prompt = "Extract medicine items with name, batch, quantity, price, expiry_date (YYYY-MM-DD), discount_percent, gst_percent, is_schedule_h (0 or 1). Return ONLY valid JSON array."
                             response = client.models.generate_content(
-                                model='gemini-2.5-flash',
+                                model='gemini-3.8-flash',
                                 contents=[pil_image, prompt],
                                 config=types.GenerateContentConfig(response_mime_type="application/json")
                             )
