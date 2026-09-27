@@ -708,7 +708,17 @@ elif st.session_state.role == "RETAILER":
 
         st.markdown("---")
 
-        df_active = pd.read_sql_query("SELECT * FROM inventory WHERE retailer_id = ? AND quantity > 0 ORDER BY name ASC, expiry_date ASC", conn, params=(st.session_state.user_id,))
+        # Query unique inventory items grouped by name and batch to prevent duplicate dropdown rows
+        df_active = pd.read_sql_query("""
+            SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
+                   MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
+                   MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h 
+            FROM inventory 
+            WHERE retailer_id = ? AND quantity > 0 
+            GROUP BY name, batch 
+            ORDER BY name ASC, expiry_date ASC;
+        """, conn, params=(st.session_state.user_id,))
+
         if not df_active.empty:
             st.markdown("#### Search Medicine (Sorted A-Z & Near Expiry First)")
             
@@ -789,6 +799,7 @@ elif st.session_state.role == "RETAILER":
                     """, (st.session_state.user_id, invoice_no, cust_name, f"{cust_phone} | Ref: {ref_type} ({doctor_ref})", grand_total))
                     
                     for item in st.session_state.cart:
+                        # Deduct quantity safely by batch matching
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
                     
@@ -917,7 +928,6 @@ elif st.session_state.role == "RETAILER":
         """, conn, params=(st.session_state.user_id,))
         
         if not df_inv.empty:
-            # Set index to start from 1 instead of 0
             df_inv.index = range(1, len(df_inv) + 1)
 
             low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
