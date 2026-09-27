@@ -384,7 +384,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     st.warning("Please fill in all required fields.")
 
     with tab3:
-        st.markdown("### 🏥 All Medical Stores & UTR Payment Approvals")
+        st.markdown("### 🏥 All Medical Stores & Payment Approvals")
         r_df = pd.read_sql_query("""
             SELECT r.id, r.store_name, r.owner_name, r.store_type, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
             FROM retailers r
@@ -395,7 +395,7 @@ if st.session_state.role == "SUPER_ADMIN":
             st.dataframe(r_df, use_container_width=True)
             
             st.markdown("---")
-            st.markdown("### ✅ Verify UTR / Transaction ID & Approve Plan Extension")
+            st.markdown("### ✅ Verify Payment & Approve Plan Extension")
             pending_df = r_df[r_df['payment_status'] == 'PENDING_APPROVAL']
             if not pending_df.empty:
                 p_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in pending_df.iterrows()}
@@ -412,7 +412,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     else:
                         c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
                     conn.commit()
-                    st.success("Payment verified via UTR and plan successfully activated!")
+                    st.success("Payment verified and plan successfully activated!")
                     st.rerun()
             else:
                 st.info("No pending payment approval requests.")
@@ -766,7 +766,7 @@ elif st.session_state.role == "RETAILER":
                 "📦 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
                 "💻 Multi-System Terminals",
-                "💳 Payment Request & Renewal"
+                "💳 Payment & QR Code Wizard"
             ])
         else:
             tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -775,7 +775,7 @@ elif st.session_state.role == "RETAILER":
                 "📊 Dashboard & Alerts", 
                 "📦 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
-                "💳 Payment Request & Renewal"
+                "💳 Payment & QR Code Wizard"
             ])
             tab7 = None
     
@@ -1207,54 +1207,62 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: PAYMENT REQUEST & WHATSAPP APPROVAL WORKFLOW
+    # TAB 7 / LAST: INTERACTIVE PAYMENT WIZARD & WHATSAPP SHARING
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
-            st.subheader("💳 Payment Request & Subscription Renewal")
-            st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, submit your UTR / Transaction ID below. Your plan will be activated once verified by Admin.")
-            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
+            st.subheader("💳 Subscription Renewal & Payment Wizard")
+            st.markdown(f"Select your plan below to generate a secure payment QR code. After scanning and paying, submit your UTR to notify Admin on WhatsApp.")
+            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`")
             
             if r_payment_status == 'PENDING_APPROVAL':
                 st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
             else:
-                with st.form("payment_request_form"):
+                with st.form("payment_wizard_form"):
                     if r_store_type == "ENTERPRISE":
-                        req_plan = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
-                        plan_desc = f"Enterprise Multi-System Plan ({'1 Month' if '1 Month' in req_plan else '1 Year'})"
+                        plan_choice = st.radio("Select Multi-System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+                        amt_val = ENT_MONTHLY_FEE if "1 Month" in plan_choice else ENT_YEARLY_FEE
+                        plan_desc = f"Enterprise Multi-System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
                     else:
-                        req_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
-                        plan_desc = f"Single System Plan ({'1 Month' if '1 Month' in req_plan else '1 Year'})"
+                        plan_choice = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+                        amt_val = MONTHLY_FEE if "1 Month" in plan_choice else YEARLY_FEE
+                        plan_desc = f"Single System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
                     
-                    utr_input = st.text_input("Enter UPI Transaction ID / UTR Number *", placeholder="e.g. 328471928471")
-                    submit_req = st.form_submit_button("📤 Submit UTR & Request WhatsApp Approval", type="primary")
+                    utr_code = st.text_input("Enter 12-Digit UPI Transaction ID / UTR Number (After Payment) *", placeholder="e.g. 328471928471")
+                    wizard_submit = st.form_submit_button("generate QR & Share Details on WhatsApp", type="primary")
                     
-                    if submit_req:
-                        if not utr_input or not utr_input.strip():
-                            st.error("❌ Please enter a valid UTR / Transaction ID before submitting!")
+                    if wizard_submit:
+                        if not utr_code or len(utr_code.strip()) < 8:
+                            st.error("❌ Please enter a valid UTR / Transaction ID after completing payment!")
                         else:
                             c = conn.cursor()
                             c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
                             conn.commit()
                             
-                            # Construct WhatsApp Message for Admin with UTR
-                            wa_msg = f"🔔 *Payment Approval Request (UTR Verification)*\n"
+                            # Build WhatsApp Message for Admin
+                            wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
                             wa_msg += f"🏥 Store Name: {r_store}\n"
-                            wa_msg += f"📦 Architecture: {r_store_type}\n"
+                            wa_msg += f"📦 System Architecture: {r_store_type}\n"
                             wa_msg += f"💳 Selected Plan: {plan_desc}\n"
-                            wa_msg += f"🔢 UTR / Txn ID: {utr_input.strip()}\n"
-                            wa_msg += f"Please verify payment in bank account and approve validity extension."
+                            wa_msg += f"🔢 UTR / Transaction ID: {utr_code.strip()}\n"
+                            wa_msg += f"Please verify payment in bank and approve validity extension."
                             
                             encoded_msg = urllib.parse.quote(wa_msg)
                             wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
                             
-                            st.success("🎉 Payment request registered! Click the button below to send UTR details to Admin on WhatsApp:")
+                            st.success("🎉 Payment request submitted successfully!")
                             st.markdown(f"""
-                                <a href="{wa_link}" target="_blank">
-                                    <button style="background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px; margin-top:10px;">
-                                        💬 Click here to Send WhatsApp Request with UTR
+                            <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
+                                <h3 style="color: #166534; margin-top: 0;">📱 Scan to Pay ₹{amt_val} via UPI QR</h3>
+                                <p style="color: #374151; font-size: 14px;">UPI ID: <b>{OWNER_UPI}</b></p>
+                                <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi%3A%2F%2Fpay%3Fpa%3D{OWNER_UPI}%26pn%3D{urllib.parse.quote(COMPANY_NAME)}%26am%3D{amt_val}%26cu%3DINR" alt="UPI QR Code" style="margin: 10px 0; border: 4px solid white; border-radius: 6px;">
+                                <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Now click below to send transaction details to Admin on WhatsApp:</p>
+                                <a href="{wa_link}" target="_blank" style="text-decoration: none;">
+                                    <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
+                                        💬 Share Transaction Details on WhatsApp for Approval
                                     </button>
                                 </a>
+                            </div>
                             """, unsafe_allow_html=True)
                             st.rerun()
 
