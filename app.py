@@ -156,48 +156,96 @@ else:
     CLIENT_BACKUP_TARGET = ""
 
 # ==============================================================================
-# 🔐 LOGIN SCREEN
+# 🔐 LOGIN & FORGOT PASSWORD SCREEN
 # ==============================================================================
 if not st.session_state.authenticated:
-    st.title(f"💊 {COMPANY_NAME} - ERP Login")
-    st.markdown("### Secure Multi-Tier Franchise & Medical Store Portal")
+    st.title(f"💊 {COMPANY_NAME} - ERP Portal")
     
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
-        
-        if submit:
-            conn = get_db_connection()
-            if username == ADMIN_USER and hash_password(password) == ADMIN_PASS_HASH:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.role = "SUPER_ADMIN"
-                conn.close()
-                st.success("Admin Login Successful!")
-                st.rerun()
-            else:
-                w_df = pd.read_sql_query("SELECT id, company_name, password_hash FROM wholesalers WHERE username = ?;", conn, params=(username,))
-                if not w_df.empty and hash_password(password) == w_df.iloc[0]["password_hash"]:
+    auth_tab1, auth_tab2 = st.tabs(["🔑 Login", "🔄 Forgot / Reset Password"])
+    
+    with auth_tab1:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("Login")
+            
+            if submit:
+                conn = get_db_connection()
+                if username == ADMIN_USER and hash_password(password) == ADMIN_PASS_HASH:
                     st.session_state.authenticated = True
                     st.session_state.username = username
-                    st.session_state.role = "WHOLESALER"
-                    st.session_state.user_id = int(w_df.iloc[0]["id"])
+                    st.session_state.role = "SUPER_ADMIN"
                     conn.close()
-                    st.success("Distributor Login Successful!")
+                    st.success("Admin Login Successful!")
                     st.rerun()
                 else:
-                    r_df = pd.read_sql_query("SELECT id, store_name, password_hash FROM retailers WHERE username = ?;", conn, params=(username,))
-                    if not r_df.empty and hash_password(password) == r_df.iloc[0]["password_hash"]:
+                    w_df = pd.read_sql_query("SELECT id, company_name, password_hash FROM wholesalers WHERE username = ?;", conn, params=(username,))
+                    if not w_df.empty and hash_password(password) == w_df.iloc[0]["password_hash"]:
                         st.session_state.authenticated = True
                         st.session_state.username = username
-                        st.session_state.role = "RETAILER"
-                        st.session_state.user_id = int(r_df.iloc[0]["id"])
+                        st.session_state.role = "WHOLESALER"
+                        st.session_state.user_id = int(w_df.iloc[0]["id"])
                         conn.close()
-                        st.success("Retailer Login Successful!")
+                        st.success("Distributor Login Successful!")
                         st.rerun()
-            conn.close()
-            st.error("Invalid Username or Password!")
+                    else:
+                        r_df = pd.read_sql_query("SELECT id, store_name, password_hash FROM retailers WHERE username = ?;", conn, params=(username,))
+                        if not r_df.empty and hash_password(password) == r_df.iloc[0]["password_hash"]:
+                            st.session_state.authenticated = True
+                            st.session_state.username = username
+                            st.session_state.role = "RETAILER"
+                            st.session_state.user_id = int(r_df.iloc[0]["id"])
+                            conn.close()
+                            st.success("Retailer Login Successful!")
+                            st.rerun()
+                conn.close()
+                st.error("Invalid Username or Password!")
+
+    with auth_tab2:
+        st.markdown("### Reset Account Password")
+        with st.form("forgot_pass_form"):
+            f_role = st.selectbox("Select Account Type", ["Retailer (Medical Store)", "Distributor (Wholesaler)", "Super Admin"])
+            f_user = st.text_input("Username / Email")
+            f_new_pass = st.text_input("New Password", type="password")
+            f_confirm = st.text_input("Confirm New Password", type="password")
+            
+            reset_btn = st.form_submit_button("Update Password")
+            
+            if reset_btn:
+                if not f_user or not f_new_pass:
+                    st.warning("Please fill in all fields.")
+                elif f_new_pass != f_confirm:
+                    st.error("Passwords do not match!")
+                else:
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    success_flag = False
+                    
+                    if f_role == "Super Admin":
+                        if f_user == ADMIN_USER:
+                            c.execute("UPDATE system_config SET super_admin_password_hash = ? WHERE id = 1;", (hash_password(f_new_pass),))
+                            conn.commit()
+                            success_flag = True
+                    elif f_role == "Distributor (Wholesaler)":
+                        c.execute("SELECT id FROM wholesalers WHERE username = ? OR email = ?;", (f_user, f_user))
+                        row = c.fetchone()
+                        if row:
+                            c.execute("UPDATE wholesalers SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
+                            conn.commit()
+                            success_flag = True
+                    else:
+                        c.execute("SELECT id FROM retailers WHERE username = ? OR email = ?;", (f_user, f_user))
+                        row = c.fetchone()
+                        if row:
+                            c.execute("UPDATE retailers SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
+                            conn.commit()
+                            success_flag = True
+                            
+                    conn.close()
+                    if success_flag:
+                        st.success("Password successfully reset! You can now login with your new password.")
+                    else:
+                        st.error("User not found with provided Username/Email!")
     st.stop()
 
 # --- SIDEBAR ---
@@ -216,14 +264,14 @@ if st.session_state.role == "SUPER_ADMIN":
     st.title(f"💊 PharmaFlow - Owner Administration Panel")
     st.subheader(f"🛡️ {COMPANY_NAME} | Central Control & Franchise Management")
 
-    # Mandatory Backup Check Warning Banner
     if not CLIENT_BACKUP_TARGET or CLIENT_BACKUP_TARGET == "":
         st.error("🚨 **CRITICAL CONFIGURATION WARNING:** Client Backup Storage ID is mandatory! Until you configure a valid backup storage URL or Google Drive ID, system operations are restricted.")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📂 All Distributors", 
         "➕ Add Distributor", 
-        "🏥 All Retailers", 
+        "🏥 All Retailers",
+        "✏️ Edit / Delete Users",
         "🔄 Renewals & Pricing",
         "⚙️ White-Label & Backup Settings"
     ])
@@ -278,6 +326,86 @@ if st.session_state.role == "SUPER_ADMIN":
             st.info("No retailers registered yet.")
 
     with tab4:
+        st.markdown("### ✏️ Edit or Delete Distributors & Retailers")
+        user_type_sel = st.radio("Select User Category", ["Distributor (Wholesaler)", "Retailer (Medical Store)"], horizontal=True)
+        
+        if user_type_sel == "Distributor (Wholesaler)":
+            dist_list = pd.read_sql_query("SELECT id, company_name, username, commission_rate FROM wholesalers ORDER BY company_name ASC;", conn)
+            if not dist_list.empty:
+                d_opts = {f"{row['company_name']} (User: {row['username']})": row['id'] for _, row in dist_list.iterrows()}
+                sel_d_str = st.selectbox("Select Distributor to Edit/Delete", list(d_opts.keys()))
+                sel_d_id = d_opts[sel_d_str]
+                
+                curr_d = dist_list[dist_list['id'] == sel_d_id].iloc[0]
+                
+                with st.form("edit_dist_form"):
+                    ed_cname = st.text_input("Agency Name", value=curr_d['company_name'])
+                    ed_comm = st.number_input("Commission Share (%)", value=float(curr_d['commission_rate']))
+                    ed_pass = st.text_input("New Password (leave blank to keep current)", type="password")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        update_d = st.form_submit_button("Update Distributor")
+                    with col2:
+                        delete_d = st.form_submit_button("🗑️ Delete Distributor")
+                        
+                    if update_d:
+                        c = conn.cursor()
+                        if ed_pass:
+                            c.execute("UPDATE wholesalers SET company_name = ?, commission_rate = ?, password_hash = ? WHERE id = ?;", (ed_cname, ed_comm, hash_password(ed_pass), sel_d_id))
+                        else:
+                            c.execute("UPDATE wholesalers SET company_name = ?, commission_rate = ? WHERE id = ?;", (ed_cname, ed_comm, sel_d_id))
+                        conn.commit()
+                        st.success("Distributor updated successfully!")
+                        st.rerun()
+                        
+                    if delete_d:
+                        c = conn.cursor()
+                        c.execute("DELETE FROM wholesalers WHERE id = ?;", (sel_d_id,))
+                        conn.commit()
+                        st.success("Distributor deleted successfully!")
+                        st.rerun()
+            else:
+                st.info("No distributors available to edit.")
+        else:
+            ret_list = pd.read_sql_query("SELECT id, store_name, username FROM retailers ORDER BY store_name ASC;", conn)
+            if not ret_list.empty:
+                r_opts = {f"{row['store_name']} (User: {row['username']})": row['id'] for _, row in ret_list.iterrows()}
+                sel_r_str = st.selectbox("Select Retailer to Edit/Delete", list(r_opts.keys()))
+                sel_r_id = r_opts[sel_r_str]
+                
+                curr_r = ret_list[ret_list['id'] == sel_r_id].iloc[0]
+                
+                with st.form("edit_ret_form"):
+                    ed_sname = st.text_input("Store Name", value=curr_r['store_name'])
+                    ed_rpass = st.text_input("New Password (leave blank to keep current)", type="password")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        update_r = st.form_submit_button("Update Retailer")
+                    with col2:
+                        delete_r = st.form_submit_button("🗑️ Delete Retailer")
+                        
+                    if update_r:
+                        c = conn.cursor()
+                        if ed_rpass:
+                            c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ?;", (ed_sname, hash_password(ed_rpass), sel_r_id))
+                        else:
+                            c.execute("UPDATE retailers SET store_name = ? WHERE id = ?;", (ed_sname, sel_r_id))
+                        conn.commit()
+                        st.success("Retailer updated successfully!")
+                        st.rerun()
+                        
+                    if delete_r:
+                        c = conn.cursor()
+                        c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
+                        conn.commit()
+                        st.success("Retailer deleted successfully!")
+                        st.rerun()
+            else:
+                st.info("No retailers available to edit.")
+
+    with tab5:
         st.markdown("### Subscription Pricing & Instant Renewal")
         st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* Current Fixed Pricing — Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**")
         
@@ -296,12 +424,12 @@ if st.session_state.role == "SUPER_ADMIN":
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime('now', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 conn.commit()
-                st.success(f"Retailer '{sel_r}' plan successfully extended!")
+                st.success("Retailer plan successfully extended!")
                 st.rerun()
         else:
             st.info("Please register a retailer before processing renewals.")
 
-    with tab5:
+    with tab6:
         st.markdown("### ⚙️ White-Label Settings, Fixed Pricing & Mandatory Backup")
         with st.form("settings_form"):
             new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
@@ -355,7 +483,7 @@ elif st.session_state.role == "WHOLESALER":
     st.title(f"📦 Distributor Support Portal: {w_name}")
     st.info(f"Your Commission Share: **{w_comm}%** | Role: Ground Support & Retailer Management")
 
-    tab1, tab2 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer"])
+    tab1, tab2, tab3 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer", "✏️ Edit Retailer Details"])
 
     with tab1:
         st.markdown("### Retailers assigned under your support network")
@@ -394,6 +522,32 @@ elif st.session_state.role == "WHOLESALER":
                         st.error(f"Error: {e}")
                 else:
                     st.warning("Please fill in all required fields.")
+
+    with tab3:
+        st.markdown("### ✏️ Edit Retailer Details in Your Network")
+        my_ret_list = pd.read_sql_query("SELECT id, store_name, username FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
+        if not my_ret_list.empty:
+            r_opts = {f"{row['store_name']} (User: {row['username']})": row['id'] for _, row in my_ret_list.iterrows()}
+            sel_r_str = st.selectbox("Select Retailer to Edit", list(r_opts.keys()))
+            sel_r_id = r_opts[sel_r_str]
+            
+            curr_r = my_ret_list[my_ret_list['id'] == sel_r_id].iloc[0]
+            
+            with st.form("dist_edit_ret_form"):
+                ed_sname = st.text_input("Store Name", value=curr_r['store_name'])
+                ed_rpass = st.text_input("New Password (leave blank to keep current)", type="password")
+                
+                if st.form_submit_button("Update Retailer Details"):
+                    c = conn.cursor()
+                    if ed_rpass:
+                        c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, hash_password(ed_rpass), sel_r_id, st.session_state.user_id))
+                    else:
+                        c.execute("UPDATE retailers SET store_name = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, sel_r_id, st.session_state.user_id))
+                    conn.commit()
+                    st.success("Retailer details updated successfully!")
+                    st.rerun()
+        else:
+            st.info("No retailers in your network to edit.")
     conn.close()
 
 # ==============================================================================
