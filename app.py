@@ -334,7 +334,7 @@ if st.session_state.role == "SUPER_ADMIN":
         "📂 All Distributors", 
         "➕ Add Distributor", 
         "🏥 All Retailers",
-        "✏️ Edit / Delete Users",
+        "✏️ Edit & Conditional Delete",
         "🔄 Variable Pricing & Plans",
         "⚙️ White-Label & Variable Pricing Setup"
     ])
@@ -389,52 +389,59 @@ if st.session_state.role == "SUPER_ADMIN":
             st.info("No retailers registered yet.")
 
     with tab4:
-        st.markdown("### ✏️ Edit or Delete Distributors & Retailers")
-        user_type_sel = st.radio("Select User Category", ["Distributor (Wholesaler)", "Retailer (Medical Store)"], horizontal=True)
+        st.markdown("### ✏️ Edit or Conditional Delete (Distributors & Retailers)")
+        user_type_sel = st.radio("Select User Category to Edit/Delete", ["Distributor (Wholesaler)", "Retailer (Medical Store)"], horizontal=True)
         
         if user_type_sel == "Distributor (Wholesaler)":
-            dist_list = pd.read_sql_query("SELECT id, company_name, username, commission_rate FROM wholesalers ORDER BY company_name ASC;", conn)
+            dist_list = pd.read_sql_query("SELECT id, company_name, username FROM wholesalers ORDER BY company_name ASC;", conn)
             if not dist_list.empty:
                 d_opts = {f"{row['company_name']} (User: {row['username']})": row['id'] for _, row in dist_list.iterrows()}
-                sel_d_str = st.selectbox("Select Distributor to Edit/Delete", list(d_opts.keys()))
+                sel_d_str = st.selectbox("Select Distributor to Edit or Conditionally Delete", list(d_opts.keys()))
                 sel_d_id = d_opts[sel_d_str]
                 
                 curr_d = dist_list[dist_list['id'] == sel_d_id].iloc[0]
                 
                 with st.form("edit_dist_form"):
                     ed_cname = st.text_input("Agency Name", value=curr_d['company_name'])
-                    ed_comm = st.number_input("Commission Share (%)", value=float(curr_d['commission_rate']))
                     ed_pass = st.text_input("New Password (leave blank to keep current)", type="password")
                     
                     col1, col2 = st.columns(2)
                     with col1:
                         update_d = st.form_submit_button("Update Distributor")
                     with col2:
-                        delete_d = st.form_submit_button("🗑️ Delete Distributor")
+                        delete_d = st.form_submit_button("🗑️ Delete Distributor (No Active Retailers)")
                         
                     if update_d:
                         c = conn.cursor()
                         if ed_pass:
-                            c.execute("UPDATE wholesalers SET company_name = ?, commission_rate = ?, password_hash = ? WHERE id = ?;", (ed_cname, ed_comm, hash_password(ed_pass), sel_d_id))
+                            c.execute("UPDATE wholesalers SET company_name = ?, password_hash = ? WHERE id = ?;", (ed_cname, hash_password(ed_pass), sel_d_id))
                         else:
-                            c.execute("UPDATE wholesalers SET company_name = ?, commission_rate = ? WHERE id = ?;", (ed_cname, ed_comm, sel_d_id))
+                            c.execute("UPDATE wholesalers SET company_name = ? WHERE id = ?;", (ed_cname, sel_d_id))
                         conn.commit()
                         st.success("Distributor updated successfully!")
                         st.rerun()
                         
                     if delete_d:
+                        # CONDITION CHECK: Allow delete ONLY IF no active retailers are assigned to this distributor
                         c = conn.cursor()
-                        c.execute("DELETE FROM wholesalers WHERE id = ?;", (sel_d_id,))
-                        conn.commit()
-                        st.success("Distributor deleted successfully!")
-                        st.rerun()
+                        c.execute("SELECT COUNT(*) FROM retailers WHERE wholesaler_id = ?;", (sel_d_id,))
+                        retailer_count = c.fetchone()[0]
+                        
+                        if retailer_count == 0:
+                            c.execute("DELETE FROM wholesalers WHERE id = ?;", (sel_d_id,))
+                            conn.commit()
+                            st.success("Distributor successfully deleted as no active retailers are assigned!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Deletion Blocked! This distributor has {retailer_count} active retailer(s) linked to their network. You cannot delete a distributor until all linked retailers are removed.")
             else:
                 st.info("No distributors available to edit.")
         else:
-            ret_list = pd.read_sql_query("SELECT id, store_name, username FROM retailers ORDER BY store_name ASC;", conn)
+            ret_list = pd.read_sql_query("SELECT id, store_name, username, subscription_status, plan_expiry_date FROM retailers ORDER BY store_name ASC;", conn)
             if not ret_list.empty:
-                r_opts = {f"{row['store_name']} (User: {row['username']})": row['id'] for _, row in ret_list.iterrows()}
-                sel_r_id = r_opts[st.selectbox("Select Retailer to Edit/Delete", list(r_opts.keys()))]
+                r_opts = {f"{row['store_name']} (Status: {row['subscription_status']}, Exp: {row['plan_expiry_date']})": row['id'] for _, row in ret_list.iterrows()}
+                sel_r_str = st.selectbox("Select Retailer to Edit or Conditionally Delete", list(r_opts.keys()))
+                sel_r_id = r_opts[sel_r_str]
                 
                 curr_r = ret_list[ret_list['id'] == sel_r_id].iloc[0]
                 
@@ -444,9 +451,9 @@ if st.session_state.role == "SUPER_ADMIN":
                     
                     col1, col2 = st.columns(2)
                     with col1:
-                        update_r = st.form_submit_button("Update Retailer")
+                        update_r = st.form_submit_button("Update Retailer Details")
                     with col2:
-                        delete_r = st.form_submit_button("🗑️ Delete Retailer")
+                        delete_r = st.form_submit_button("🗑️ Delete Retailer (Trial/Expired Only)")
                         
                     if update_r:
                         c = conn.cursor()
@@ -459,11 +466,19 @@ if st.session_state.role == "SUPER_ADMIN":
                         st.rerun()
                         
                     if delete_r:
-                        c = conn.cursor()
-                        c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
-                        conn.commit()
-                        st.success("Retailer deleted successfully!")
-                        st.rerun()
+                        # CONDITION CHECK: Allow delete ONLY IF subscription_status == 'TRIAL' OR plan_expiry_date < current time
+                        expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
+                        is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
+                        is_expired = expiry_dt < datetime.now()
+                        
+                        if is_trial or is_expired:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
+                            conn.commit()
+                            st.success("Retailer successfully deleted as plan is in Trial or Expired!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription. You can only delete retailers whose plan is in Trial or has Expired.")
             else:
                 st.info("No retailers available to edit.")
 
@@ -559,7 +574,7 @@ elif st.session_state.role == "WHOLESALER":
     st.title(f"📦 Distributor Support Portal: {w_name}")
     st.info(f"Your Commission Share: **{w_comm}%** | Role: Ground Support & Retailer Management")
 
-    tab1, tab2, tab3 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer", "✏️ Edit Retailer Details"])
+    tab1, tab2, tab3 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer", "✏️ Edit & Conditional Delete Retailer"])
 
     with tab1:
         st.markdown("### Retailers assigned under your support network")
@@ -605,11 +620,11 @@ elif st.session_state.role == "WHOLESALER":
                     st.warning("Please fill in all required fields.")
 
     with tab3:
-        st.markdown("### ✏️ Edit Retailer Details in Your Network")
-        my_ret_list = pd.read_sql_query("SELECT id, store_name, username FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
+        st.markdown("### ✏️ Edit or Conditionally Delete Retailer in Your Network")
+        my_ret_list = pd.read_sql_query("SELECT id, store_name, username, subscription_status, plan_expiry_date FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
         if not my_ret_list.empty:
-            r_opts = {f"{row['store_name']} (User: {row['username']})": row['id'] for _, row in my_ret_list.iterrows()}
-            sel_r_str = st.selectbox("Select Retailer to Edit", list(r_opts.keys()))
+            r_opts = {f"{row['store_name']} (Status: {row['subscription_status']}, Exp: {row['plan_expiry_date']})": row['id'] for _, row in my_ret_list.iterrows()}
+            sel_r_str = st.selectbox("Select Retailer to Edit or Conditionally Delete", list(r_opts.keys()))
             sel_r_id = r_opts[sel_r_str]
             
             curr_r = my_ret_list[my_ret_list['id'] == sel_r_id].iloc[0]
@@ -618,15 +633,35 @@ elif st.session_state.role == "WHOLESALER":
                 ed_sname = st.text_input("Store Name", value=curr_r['store_name'])
                 ed_rpass = st.text_input("New Password (leave blank to keep current)", type="password")
                 
-                if st.form_submit_button("Update Retailer Details"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_r = st.form_submit_button("Update Retailer Details")
+                with col2:
+                    delete_r = st.form_submit_button("🗑️ Delete Retailer (Trial/Expired Only)")
+                    
+                if update_r:
                     c = conn.cursor()
                     if ed_rpass:
                         c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, hash_password(ed_rpass), sel_r_id, st.session_state.user_id))
                     else:
-                        c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, sel_r_id, st.session_state.user_id))
+                        c.execute("UPDATE retailers SET store_name = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, sel_r_id, st.session_state.user_id))
                     conn.commit()
                     st.success("Retailer details updated successfully!")
                     st.rerun()
+                    
+                if delete_r:
+                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
+                    is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
+                    is_expired = expiry_dt < datetime.now()
+                    
+                    if is_trial or is_expired:
+                        c = conn.cursor()
+                        c.execute("DELETE FROM retailers WHERE id = ? AND wholesaler_id = ?;", (sel_r_id, st.session_state.user_id))
+                        conn.commit()
+                        st.success("Retailer successfully deleted as plan is in Trial or Expired!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription. You can only delete retailers whose plan is in Trial or has Expired.")
         else:
             st.info("No retailers in your network to edit.")
     conn.close()
