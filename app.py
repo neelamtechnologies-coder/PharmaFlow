@@ -12,6 +12,7 @@ from google import genai
 from google.genai import types
 import hashlib
 import urllib.parse
+import streamlit.components.v1 as components
 
 # ==============================================================================
 # 🗄️ DATABASE SETUP & SAFE MIGRATION
@@ -684,7 +685,6 @@ elif st.session_state.role == "RETAILER":
     with tab2:
         st.subheader("🛒 Customer Billing Counter")
         
-        # Check if cart contains any Schedule H medicine
         cart_has_schedule_h = any(item.get('is_schedule_h', 0) == 1 for item in st.session_state.cart)
         
         col_b1, col_b2, col_b3 = st.columns([2, 1.5, 1.5])
@@ -776,7 +776,6 @@ elif st.session_state.role == "RETAILER":
                 
                 st.markdown(f"### Grand Total: ₹ {grand_total:.2f} *(Total Savings: ₹ {total_savings:.2f})*")
                 
-                # Strict Validation: Schedule H requires Doctor name
                 missing_doctor = (cart_has_schedule_h and (not raw_doc or not raw_doc.strip()))
                 
                 if missing_doctor:
@@ -793,7 +792,6 @@ elif st.session_state.role == "RETAILER":
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
                     
-                    # Prepare WhatsApp Message Text
                     wa_text = f"*{r_store} - Tax Invoice*\n"
                     wa_text += f"Inv No: {invoice_no}\n"
                     wa_text += f"Date: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n"
@@ -805,7 +803,7 @@ elif st.session_state.role == "RETAILER":
                     wa_text += "-------------------\n"
                     wa_text += f"*Grand Total: ₹{grand_total:.2f}*\n"
                     wa_text += f"*(You Saved: ₹{total_savings:.2f})*\n"
-                    wa_text += f"Thank You for shopping with us!"
+                    wa_text += f"Thank You for shopping with us! — Powered by {COMPANY_NAME}"
                     
                     encoded_wa_text = urllib.parse.quote(wa_text)
                     clean_phone = "".join(filter(str.isdigit, cust_phone))
@@ -827,13 +825,12 @@ elif st.session_state.role == "RETAILER":
                     st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
                     st.balloons()
             
-            # Printable Invoice Modal & WhatsApp Send Button
+            # Printable Invoice Preview & Native Browser Print Trigger
             if st.session_state.last_invoice:
                 inv = st.session_state.last_invoice
                 st.markdown("---")
                 st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
                 
-                # WhatsApp Direct Send Button
                 if inv['customer_phone'] and len(inv['customer_phone'].strip()) >= 10 and inv['wa_link']:
                     st.markdown(f"""
                         <a href="{inv['wa_link']}" target="_blank">
@@ -845,49 +842,60 @@ elif st.session_state.role == "RETAILER":
                 else:
                     st.info("💡 Tip: Enter a 10-digit customer phone number before completing the sale to enable direct WhatsApp bill dispatch.")
 
-                invoice_container = st.container()
-                with invoice_container:
-                    st.markdown(f"""
-                    <div style="background-color: #1e1e1e; padding: 20px; border-radius: 10px; border: 1px solid #444; font-family: monospace; color: #fff;">
-                        <h3 style="text-align: center; margin: 0;">🏥 {inv['store_name']}</h3>
-                        <p style="text-align: center; font-size: 12px; color: #aaa; margin: 2px 0;">GST Retail Invoice / Cash Memo</p>
-                        <hr style="border-color: #55f;">
-                        <p><b>Invoice No:</b> {inv['invoice_no']} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Date:</b> {inv['date']}</p>
-                        <p><b>Customer:</b> {inv['customer_name']} ({inv['customer_phone']})</p>
-                        <p><b>Reference:</b> {inv['reference']}</p>
-                        <hr style="border-color: #444;">
-                        <table style="width: 100%; font-size: 13px; text-align: left;">
-                            <tr><th>Item</th><th>Qty</th><th>MRP</th><th>Disc</th><th>Total</th></tr>
-                    """, unsafe_allow_html=True)
-                    
-                    for itm in inv['items']:
-                        st.markdown(f"""
-                            <tr>
-                                <td>{itm['name']}</td>
-                                <td>{itm['qty']}</td>
-                                <td>₹{itm['mrp']}</td>
-                                <td>{itm['discount_percent']}% (₹{itm['discount_rs']:.2f})</td>
-                                <td><b>₹{itm['net_total']:.2f}</b></td>
-                            </tr>
-                        """, unsafe_allow_html=True)
-                        
-                    st.markdown(f"""
-                        </table>
-                        <hr style="border-color: #444;">
-                        <h4 style="text-align: right; margin: 5px 0;">Grand Total: ₹{inv['grand_total']:.2f}</h4>
-                        <p style="text-align: right; font-size: 12px; color: #40ff80; margin: 0;">You Saved: ₹{inv['total_savings']:.2f}</p>
-                        <p style="text-align: center; font-size: 11px; color: #888; margin-top: 15px;">Thank You! Get Well Soon. — Powered by {COMPANY_NAME}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                # Render Printable Bill with Native JavaScript Print Dialog trigger
+                bill_html = f"""
+                <div id="printable-bill" style="background-color: #ffffff; color: #000000; padding: 25px; border-radius: 8px; font-family: monospace; max-width: 450px; margin: auto; border: 1px solid #ccc;">
+                    <h2 style="text-align: center; margin: 0;">🏥 {inv['store_name']}</h2>
+                    <p style="text-align: center; font-size: 12px; color: #555; margin: 3px 0;">GST Retail Invoice / Cash Memo</p>
+                    <hr style="border-color: #000;">
+                    <p style="margin: 4px 0;"><b>Invoice No:</b> {inv['invoice_no']}</p>
+                    <p style="margin: 4px 0;"><b>Date:</b> {inv['date']}</p>
+                    <p style="margin: 4px 0;"><b>Customer:</b> {inv['customer_name']} ({inv['customer_phone']})</p>
+                    <p style="margin: 4px 0;"><b>Reference:</b> {inv['reference']}</p>
+                    <hr style="border-color: #000;">
+                    <table style="width: 100%; font-size: 12px; text-align: left; border-collapse: collapse;">
+                        <tr style="border-bottom: 1px solid #000;"><th>Item</th><th>Qty</th><th>MRP</th><th>Disc</th><th>Total</th></tr>
+                """
+                for itm in inv['items']:
+                    bill_html += f"""
+                        <tr style="border-bottom: 1px dashed #ddd;">
+                            <td style="padding: 4px 0;">{itm['name']}</td>
+                            <td>{itm['qty']}</td>
+                            <td>₹{itm['mrp']}</td>
+                            <td>{itm['discount_percent']}%</td>
+                            <td><b>₹{itm['net_total']:.2f}</b></td>
+                        </tr>
+                    """
+                bill_html += f"""
+                    </table>
+                    <hr style="border-color: #000;">
+                    <h3 style="text-align: right; margin: 5px 0;">Grand Total: ₹{inv['grand_total']:.2f}</h3>
+                    <p style="text-align: right; font-size: 11px; color: #008000; margin: 0;">You Saved: ₹{inv['total_savings']:.2f}</p>
+                    <br>
+                    <p style="text-align: center; font-size: 11px; color: #333; margin: 10px 0 2px 0;">Thank You! Get Well Soon.</p>
+                    <p style="text-align: center; font-size: 10px; color: #000; font-weight: bold; margin: 0;">Powered by {COMPANY_NAME}</p>
+                </div>
+                <script>
+                    function printBill() {{
+                        var printContents = document.getElementById('printable-bill').innerHTML;
+                        var originalContents = document.body.innerHTML;
+                        document.body.innerHTML = printContents;
+                        window.print();
+                        document.body.innerHTML = originalContents;
+                        window.location.reload();
+                    }}
+                </script>
+                <div style="text-align: center; margin-top: 15px;">
+                    <button onclick="printBill()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
+                        🖨️ Select Printer & Print Thermal Slip
+                    </button>
+                </div>
+                """
+                components.html(bill_html, height=520)
                 
-                col_p1, col_p2 = st.columns(2)
-                with col_p1:
-                    if st.button("🖨️ Print Thermal Slip"):
-                        st.toast("Printing invoice to thermal printer...")
-                with col_p2:
-                    if st.button("✖️ Close / Clear Preview"):
-                        st.session_state.last_invoice = None
-                        st.rerun()
+                if st.button("✖️ Close / Clear Preview"):
+                    st.session_state.last_invoice = None
+                    st.rerun()
         else:
             st.info("No active stock available in inventory.")
 
