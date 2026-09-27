@@ -36,6 +36,7 @@ def init_db():
             super_admin_username TEXT DEFAULT 'admin',
             super_admin_password_hash TEXT DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',
             upi_id TEXT DEFAULT 'neelamtech@upi',
+            admin_phone TEXT DEFAULT '919876543210',
             monthly_fee REAL DEFAULT 599.0,
             yearly_fee REAL DEFAULT 5999.0,
             enterprise_monthly_fee REAL DEFAULT 999.0,
@@ -49,6 +50,8 @@ def init_db():
 
     c.execute("PRAGMA table_info(system_config);")
     columns = [col[1] for col in c.fetchall()]
+    if "admin_phone" not in columns:
+        c.execute("ALTER TABLE system_config ADD COLUMN admin_phone TEXT DEFAULT '919876543210';")
     if "monthly_fee" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN monthly_fee REAL DEFAULT 599.0;")
     if "yearly_fee" not in columns:
@@ -66,8 +69,8 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
         c.execute('''
-            INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 599.0, 5999.0, 999.0, 9999.0, '', '');
+            INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key)
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, '', '');
         ''')
         conn.commit()
 
@@ -108,6 +111,9 @@ def init_db():
     r_columns = [col[1] for col in c.fetchall()]
     if "store_type" not in r_columns:
         c.execute("ALTER TABLE retailers ADD COLUMN store_type TEXT DEFAULT 'SINGLE';")
+    conn.commit()
+
+    c.execute("UPDATE retailers SET plan_expiry_date = datetime(created_at, '+7 days') WHERE subscription_status = 'TRIAL' AND payment_status = 'PENDING';")
     conn.commit()
 
     c.execute('''
@@ -172,7 +178,7 @@ if "last_invoice" not in st.session_state:
     st.session_state.last_invoice = None
 
 conn = get_db_connection()
-config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
+config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
 conn.close()
 
 if not config_df.empty:
@@ -180,6 +186,7 @@ if not config_df.empty:
     ADMIN_USER = config_df.iloc[0]["super_admin_username"]
     ADMIN_PASS_HASH = config_df.iloc[0]["super_admin_password_hash"]
     OWNER_UPI = config_df.iloc[0]["upi_id"]
+    ADMIN_PHONE = str(config_df.iloc[0]["admin_phone"])
     MONTHLY_FEE = float(config_df.iloc[0]["monthly_fee"])
     YEARLY_FEE = float(config_df.iloc[0]["yearly_fee"])
     ENT_MONTHLY_FEE = float(config_df.iloc[0]["enterprise_monthly_fee"])
@@ -191,6 +198,7 @@ else:
     ADMIN_USER = "admin"
     ADMIN_PASS_HASH = hash_password("admin")
     OWNER_UPI = "neelamtech@upi"
+    ADMIN_PHONE = "919876543210"
     MONTHLY_FEE = 599.0
     YEARLY_FEE = 5999.0
     ENT_MONTHLY_FEE = 999.0
@@ -333,7 +341,7 @@ if st.session_state.role == "SUPER_ADMIN":
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📂 All Distributors", 
         "➕ Add Distributor", 
-        "🏥 All Retailers",
+        "🏥 All Retailers & Approvals",
         "✏️ Edit & Conditional Delete",
         "🔄 Variable Pricing & Plans",
         "⚙️ White-Label & Variable Pricing Setup"
@@ -376,15 +384,38 @@ if st.session_state.role == "SUPER_ADMIN":
                     st.warning("Please fill in all required fields.")
 
     with tab3:
-        st.markdown("### All Medical Stores (Retailers in Network)")
+        st.markdown("### 🏥 All Medical Stores & UTR Payment Approvals")
         r_df = pd.read_sql_query("""
-            SELECT r.id, r.store_name, r.owner_name, r.email, r.phone, r.store_type, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
+            SELECT r.id, r.store_name, r.owner_name, r.store_type, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
             FROM retailers r
             LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
             ORDER BY r.store_name ASC;
         """, conn)
         if not r_df.empty:
             st.dataframe(r_df, use_container_width=True)
+            
+            st.markdown("---")
+            st.markdown("### ✅ Verify UTR / Transaction ID & Approve Plan Extension")
+            pending_df = r_df[r_df['payment_status'] == 'PENDING_APPROVAL']
+            if not pending_df.empty:
+                p_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in pending_df.iterrows()}
+                sel_p_str = st.selectbox("Select Store Requesting Approval", list(p_opts.keys()))
+                sel_p_id = p_opts[sel_p_str]
+                
+                store_type_val = pending_df[pending_df['id'] == sel_p_id].iloc[0]['store_type']
+                add_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"])
+                
+                if st.button("✅ Verify Payment & Activate Plan", type="primary"):
+                    c = conn.cursor()
+                    if add_period == "1 Month":
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
+                    else:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
+                    conn.commit()
+                    st.success("Payment verified via UTR and plan successfully activated!")
+                    st.rerun()
+            else:
+                st.info("No pending payment approval requests.")
         else:
             st.info("No retailers registered yet.")
 
@@ -467,7 +498,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     if delete_r:
                         expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
                         is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
-                        is_pending = str(curr_r['payment_status']).upper() == 'PENDING'
+                        is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
                         is_expired = expiry_dt < datetime.now()
                         
                         if is_trial or is_pending or is_expired:
@@ -498,15 +529,14 @@ if st.session_state.role == "SUPER_ADMIN":
             else:
                 period = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
             
-            if st.button("⚡ Instant Activate & Extend Plan", type="primary"):
+            if st.button("⚡ Verify & Extend Plan", type="primary"):
                 c = conn.cursor()
                 if "1 Month" in period:
-                    # Extend from current expiry or now + 7 days + 1 month
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+7 days', '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 else:
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+7 days', '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 conn.commit()
-                st.success("Plan instantly extended without approvals!")
+                st.success("Plan extended successfully!")
                 st.rerun()
         else:
             st.info("Please register a retailer before processing.")
@@ -518,6 +548,7 @@ if st.session_state.role == "SUPER_ADMIN":
             new_user = st.text_input("Admin Username", value=ADMIN_USER)
             new_pwd = st.text_input("New Admin Password (leave blank to keep current)", type="password")
             new_upi = st.text_input("Official Business UPI ID (for direct payments)", value=OWNER_UPI)
+            new_phone = st.text_input("Admin WhatsApp Phone Number (with Country Code, e.g. 919876543210)", value=ADMIN_PHONE)
             
             st.markdown("---")
             st.markdown("#### 💰 Variable Subscription Pricing Control (Market-wise)")
@@ -546,15 +577,15 @@ if st.session_state.role == "SUPER_ADMIN":
                         if new_pwd:
                             c.execute("""
                                 UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         else:
                             c.execute("""
                                 UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, upi_id = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                                SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, new_upi, new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                            """, (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         conn.commit()
                         st.success("Settings updated successfully! Rebooting application...")
                         st.rerun()
@@ -574,7 +605,7 @@ elif st.session_state.role == "WHOLESALER":
     st.title(f"📦 Distributor Support Portal: {w_name}")
     st.info(f"Your Commission Share: **{w_comm}%** | Role: Ground Support & Retailer Management")
 
-    tab1, tab2, tab3 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer", "✏️ Edit & Conditional Delete Retailer"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer", "✅ Payment Approvals", "✏️ Edit & Conditional Delete"])
 
     with tab1:
         st.markdown("### Retailers assigned under your support network")
@@ -607,10 +638,9 @@ elif st.session_state.role == "WHOLESALER":
                     try:
                         c = conn.cursor()
                         store_category = "ENTERPRISE" if "ENTERPRISE" in s_type else "SINGLE"
-                        # Set initial plan expiry to 7 days from now for trial
                         c.execute("""
-                            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+7 days'))
+                            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+7 days'), CURRENT_TIMESTAMP)
                         """, (st.session_state.user_id, s_name, o_name, email, phone, store_category, r_user, hash_password(r_pass)))
                         conn.commit()
                         st.success(f"Retailer '{s_name}' ({store_category}) successfully added with 7 days free trial!")
@@ -621,6 +651,33 @@ elif st.session_state.role == "WHOLESALER":
                     st.warning("Please fill in all required fields.")
 
     with tab3:
+        st.markdown("### ✅ Pending Payment Approvals for Your Network")
+        my_pending_df = pd.read_sql_query("""
+            SELECT id, store_name, store_type, subscription_status, payment_status, plan_expiry_date 
+            FROM retailers 
+            WHERE wholesaler_id = ? AND payment_status = 'PENDING_APPROVAL';
+        """, conn, params=(st.session_state.user_id,))
+        
+        if not my_pending_df.empty:
+            mp_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in my_pending_df.iterrows()}
+            sel_mp_str = st.selectbox("Select Store Requesting Approval", list(mp_opts.keys()))
+            sel_mp_id = mp_opts[sel_mp_str]
+            
+            mp_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"], key="wholesaler_period")
+            
+            if st.button("✅ Verify Payment & Activate Plan", type="primary", key="wholesaler_verify_btn"):
+                c = conn.cursor()
+                if mp_period == "1 Month":
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
+                else:
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
+                conn.commit()
+                st.success("Payment verified and plan successfully activated!")
+                st.rerun()
+        else:
+            st.info("No pending payment approvals in your network.")
+
+    with tab4:
         st.markdown("### ✏️ Edit or Conditionally Delete Retailer in Your Network")
         my_ret_list = pd.read_sql_query("SELECT id, store_name, username, subscription_status, payment_status, plan_expiry_date FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
         if not my_ret_list.empty:
@@ -653,7 +710,7 @@ elif st.session_state.role == "WHOLESALER":
                 if delete_r:
                     expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
                     is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
-                    is_pending = str(curr_r['payment_status']).upper() == 'PENDING'
+                    is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
                     is_expired = expiry_dt < datetime.now()
                     
                     if is_trial or is_pending or is_expired:
@@ -684,12 +741,13 @@ elif st.session_state.role == "RETAILER":
     r_store = r_info.iloc[0]["store_name"]
     r_store_type = r_info.iloc[0]["store_type"]
     r_status = r_info.iloc[0]["subscription_status"]
+    r_payment_status = r_info.iloc[0]["payment_status"]
     r_expiry = r_info.iloc[0]["plan_expiry_date"]
     support_partner = r_info.iloc[0]["support_partner"] or "Direct Neelam Technologies"
     support_phone = r_info.iloc[0]["support_phone"] or "N/A"
     
     st.title(f"🏥 {r_store} - Medical Store ERP ({st.session_state.terminal_type} TERMINAL)")
-    st.success(f"System Type: **{r_store_type}** | Subscription Status: **{r_status}** | Valid Till: **{r_expiry}**")
+    st.success(f"System Type: **{r_store_type}** | Status: **{r_status}** (Payment: {r_payment_status}) | Valid Till: **{r_expiry}**")
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"🛠️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
@@ -708,7 +766,7 @@ elif st.session_state.role == "RETAILER":
                 "📦 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
                 "💻 Multi-System Terminals",
-                "💳 Self-Service Plan Renewal"
+                "💳 Payment Request & Renewal"
             ])
         else:
             tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -717,7 +775,7 @@ elif st.session_state.role == "RETAILER":
                 "📊 Dashboard & Alerts", 
                 "📦 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
-                "💳 Self-Service Plan Renewal"
+                "💳 Payment Request & Renewal"
             ])
             tab7 = None
     
@@ -1149,35 +1207,55 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: SELF-SERVICE RETAILER PLAN RENEWAL (Strict Payment Verification & Trial + Month Logic)
+    # TAB 7 / LAST: PAYMENT REQUEST & WHATSAPP APPROVAL WORKFLOW
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
-            st.subheader("💳 Self-Service Subscription & Instant Renewal")
-            st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, select your plan and activate it instantly!")
+            st.subheader("💳 Payment Request & Subscription Renewal")
+            st.markdown(f"Pay the subscription fee securely using the official owner UPI ID. Once paid, submit your UTR / Transaction ID below. Your plan will be activated once verified by Admin.")
             st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
             
-            with st.form("self_renew_form"):
-                if r_store_type == "ENTERPRISE":
-                    self_plan = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
-                else:
-                    self_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
-                
-                payment_done_checkbox = st.checkbox("✅ I have successfully transferred the payment to the official UPI ID.")
-                self_submit = st.form_submit_button("⚡ Pay & Instant Self-Activate Plan", type="primary")
-                
-                if self_submit:
-                    if not payment_done_checkbox:
-                        st.error("❌ Please confirm payment by checking the box before activating your plan!")
+            if r_payment_status == 'PENDING_APPROVAL':
+                st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
+            else:
+                with st.form("payment_request_form"):
+                    if r_store_type == "ENTERPRISE":
+                        req_plan = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+                        plan_desc = f"Enterprise Multi-System Plan ({'1 Month' if '1 Month' in req_plan else '1 Year'})"
                     else:
-                        c = conn.cursor()
-                        # Extend from current expiry or now + 1 month/year
-                        if "1 Month" in self_plan:
-                            c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
+                        req_plan = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+                        plan_desc = f"Single System Plan ({'1 Month' if '1 Month' in req_plan else '1 Year'})"
+                    
+                    utr_input = st.text_input("Enter UPI Transaction ID / UTR Number *", placeholder="e.g. 328471928471")
+                    submit_req = st.form_submit_button("📤 Submit UTR & Request WhatsApp Approval", type="primary")
+                    
+                    if submit_req:
+                        if not utr_input or not utr_input.strip():
+                            st.error("❌ Please enter a valid UTR / Transaction ID before submitting!")
                         else:
-                            c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (st.session_state.user_id,))
-                        conn.commit()
-                        st.success("🎉 Payment verified & subscription successfully extended instantly!")
-                        st.rerun()
+                            c = conn.cursor()
+                            c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
+                            conn.commit()
+                            
+                            # Construct WhatsApp Message for Admin with UTR
+                            wa_msg = f"🔔 *Payment Approval Request (UTR Verification)*\n"
+                            wa_msg += f"🏥 Store Name: {r_store}\n"
+                            wa_msg += f"📦 Architecture: {r_store_type}\n"
+                            wa_msg += f"💳 Selected Plan: {plan_desc}\n"
+                            wa_msg += f"🔢 UTR / Txn ID: {utr_input.strip()}\n"
+                            wa_msg += f"Please verify payment in bank account and approve validity extension."
+                            
+                            encoded_msg = urllib.parse.quote(wa_msg)
+                            wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
+                            
+                            st.success("🎉 Payment request registered! Click the button below to send UTR details to Admin on WhatsApp:")
+                            st.markdown(f"""
+                                <a href="{wa_link}" target="_blank">
+                                    <button style="background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px; margin-top:10px;">
+                                        💬 Click here to Send WhatsApp Request with UTR
+                                    </button>
+                                </a>
+                            """, unsafe_allow_html=True)
+                            st.rerun()
 
     conn.close()
