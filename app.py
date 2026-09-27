@@ -579,7 +579,7 @@ if st.session_state.role == "SUPER_ADMIN":
                                 UPDATE system_config 
                                 SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                                 WHERE id = 1;
-                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                         else:
                             c.execute("""
                                 UPDATE system_config 
@@ -1207,18 +1207,36 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: CORRECT WIZARD (Step 1: Select Plan & Generate QR -> Step 2: Enter UTR & Share on WhatsApp)
+    # TAB 7 / LAST: PERSISTENT PAYMENT WIZARD & WHATSAPP SHARING
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
             st.subheader("💳 Subscription Renewal & Payment Wizard")
-            st.markdown(f"Select your plan below and click **'Generate QR Code for Payment'**. After scanning and paying, enter your UTR to notify Admin on WhatsApp.")
+            st.markdown(f"Select your plan below to generate a secure payment QR code. After scanning and paying, enter your UTR to notify Admin on WhatsApp.")
             st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`")
             
             if r_payment_status == 'PENDING_APPROVAL':
                 st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
+                
+                # Retrieve the last submitted UTR message if pending
+                wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
+                wa_msg += f"🏥 Store Name: {r_store}\n"
+                wa_msg += f"📦 System Architecture: {r_store_type}\n"
+                wa_msg += f"Please verify payment in bank and approve validity extension."
+                encoded_msg = urllib.parse.quote(wa_msg)
+                wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
+                
+                st.markdown(f"""
+                <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
+                    <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Need to resend details to Admin on WhatsApp?</p>
+                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
+                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
+                            💬 Resend Request on WhatsApp
+                        </button>
+                    </a>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                # Initialize session state for wizard step
                 if "qr_generated" not in st.session_state:
                     st.session_state.qr_generated = False
                 
@@ -1269,7 +1287,6 @@ elif st.session_state.role == "RETAILER":
                                 c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
                                 conn.commit()
                                 
-                                # Build WhatsApp Message for Admin with UTR
                                 wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
                                 wa_msg += f"🏥 Store Name: {r_store}\n"
                                 wa_msg += f"📦 System Architecture: {r_store_type}\n"
