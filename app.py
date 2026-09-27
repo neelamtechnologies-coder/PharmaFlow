@@ -13,7 +13,7 @@ from google.genai import types
 import hashlib
 
 # ==============================================================================
-# 🗄️ DATABASE SETUP & MULTI-TIER TABLES
+# 🗄️ DATABASE SETUP & SAFE MIGRATION
 # ==============================================================================
 DB_FILE = "medical_store.db"
 
@@ -27,6 +27,7 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
+    # 1. System Config Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS system_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +41,9 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     ''')
-    
+    conn.commit()
+
+    # Safely check and add missing columns to system_config if table already existed
     c.execute("PRAGMA table_info(system_config);")
     columns = [col[1] for col in c.fetchall()]
     if "monthly_fee" not in columns:
@@ -49,6 +52,7 @@ def init_db():
         c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 9999.0;")
     if "client_backup_target" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT '';")
+    conn.commit()
 
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
@@ -56,7 +60,9 @@ def init_db():
             INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, monthly_fee, yearly_fee, client_backup_target)
             VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', 999.0, 9999.0, '');
         ''')
+        conn.commit()
 
+    # 2. Wholesalers Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS wholesalers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +77,7 @@ def init_db():
         );
     ''')
 
+    # 3. Retailers Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS retailers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +96,7 @@ def init_db():
         );
     ''')
 
+    # 4. Inventory Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +114,7 @@ def init_db():
         );
     ''')
 
+    # 5. Sales Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
