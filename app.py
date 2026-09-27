@@ -645,10 +645,14 @@ elif st.session_state.role == "RETAILER":
             
             if st.button("📥 Confirm & Save to Inventory Stock", type="primary"):
                 for _, r in edited_scanned_df.iterrows():
+                    disc = float(r['discount_percent']) if pd.notnull(r['discount_percent']) and r['discount_percent'] != '' else 0.0
+                    gst = float(r['gst_percent']) if pd.notnull(r['gst_percent']) and r['gst_percent'] != '' else 12.0
+                    sched = int(r['is_schedule_h']) if pd.notnull(r['is_schedule_h']) and r['is_schedule_h'] != '' else 0
+                    
                     c.execute("""
                         INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (st.session_state.user_id, str(r['name']).upper(), str(r['batch']).upper(), int(r['quantity']), str(r['expiry_date']), float(r['price']), float(r['discount_percent']), float(r['gst_percent']), int(r['is_schedule_h'])))
+                    """, (st.session_state.user_id, str(r['name']).upper(), str(r['batch']).upper(), int(r['quantity']), str(r['expiry_date']), float(r['price']), disc, gst, sched))
                 conn.commit()
                 st.session_state.scanned_data = None
                 st.success("🎉 Stock successfully added!")
