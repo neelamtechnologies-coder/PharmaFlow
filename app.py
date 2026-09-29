@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 import random
 
 # ==============================================================================
-# 🗄️ DATABASE SETUP & SAFE MIGRATION
+# 🗄️️ DATABASE SETUP & SAFE MIGRATION
 # ==============================================================================
 DB_FILE = "medical_store.db"
 
@@ -42,7 +42,7 @@ def init_db():
             yearly_fee REAL DEFAULT 5999.0,
             enterprise_monthly_fee REAL DEFAULT 999.0,
             enterprise_yearly_fee REAL DEFAULT 9999.0,
-            client_backup_target TEXT DEFAULT 'https://drive.google.com/drive/folders/default_backup',
+            client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket',
             gemini_api_key TEXT DEFAULT '',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -62,7 +62,7 @@ def init_db():
     if "enterprise_yearly_fee" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN enterprise_yearly_fee REAL DEFAULT 9999.0;")
     if "client_backup_target" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT 'https://drive.google.com/drive/folders/default_backup';")
+        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket';")
     if "gemini_api_key" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN gemini_api_key TEXT DEFAULT '';")
     conn.commit()
@@ -71,7 +71,7 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute('''
             INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://drive.google.com/drive/folders/default_backup', '');
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', '');
         ''')
         conn.commit()
 
@@ -218,7 +218,7 @@ else:
     YEARLY_FEE = 5999.0
     ENT_MONTHLY_FEE = 999.0
     ENT_YEARLY_FEE = 9999.0
-    CLIENT_BACKUP_TARGET = "https://drive.google.com/drive/folders/default_backup"
+    CLIENT_BACKUP_TARGET = "https://s3.amazonaws.com/neelam-technologies-backup-bucket"
     MASTER_GEMINI_KEY = ""
 
 # ==============================================================================
@@ -391,7 +391,7 @@ if st.sidebar.button("Logout"):
 # ==============================================================================
 if st.session_state.role == "SUPER_ADMIN":
     st.title(f"💊 PharmaFlow - Owner Administration Panel")
-    st.subheader(f"🛡️️ {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
+    st.subheader(f"🛡 {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📂 All Distributors", 
@@ -620,8 +620,8 @@ if st.session_state.role == "SUPER_ADMIN":
             new_gemini_key = st.text_input("Gemini API Key", value=MASTER_GEMINI_KEY, type="password", help="Enter your Google AI Studio API key here so all retailers can use the AI bill scanner automatically.")
 
             st.markdown("---")
-            st.markdown("#### ☁️ Client Backup Storage Configuration")
-            new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook", value=CLIENT_BACKUP_TARGET)
+            st.markdown("#### ☁️ AWS S3 Cloud Backup Storage Configuration")
+            new_backup_target = st.text_input("AWS S3 Cloud Backup Bucket URL / Endpoint", value=CLIENT_BACKUP_TARGET)
             
             if st.form_submit_button("Save All Variable Settings"):
                 try:
@@ -802,7 +802,7 @@ elif st.session_state.role == "RETAILER":
     st.success(f"System Type: **{r_store_type}** | Status: **{r_status}** (Payment: {r_payment_status}) | Valid Till: **{r_expiry}**")
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"🛠️️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
+    st.sidebar.markdown(f"🛠 **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
     
     # --- ROLE SEGREGATION: SERVER vs CLIENT ---
     if st.session_state.terminal_type == "CLIENT":
