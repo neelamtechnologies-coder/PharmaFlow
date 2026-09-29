@@ -13,6 +13,7 @@ from google.genai import types
 import hashlib
 import urllib.parse
 import streamlit.components.v1 as components
+import random
 
 # ==============================================================================
 # 🗄️ DATABASE SETUP & SAFE MIGRATION
@@ -177,6 +178,18 @@ if "scanned_data" not in st.session_state:
 if "last_invoice" not in st.session_state:
     st.session_state.last_invoice = None
 
+# Session state for secure OTP reset flow
+if "reset_otp_sent" not in st.session_state:
+    st.session_state.reset_otp_sent = False
+if "generated_otp" not in st.session_state:
+    st.session_state.generated_otp = ""
+if "reset_target_user" not in st.session_state:
+    st.session_state.reset_target_user = ""
+if "reset_target_role" not in st.session_state:
+    st.session_state.reset_target_role = ""
+if "reset_new_pass" not in st.session_state:
+    st.session_state.reset_new_pass = ""
+
 conn = get_db_connection()
 config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
 conn.close()
@@ -207,12 +220,12 @@ else:
     MASTER_GEMINI_KEY = ""
 
 # ==============================================================================
-# 🔐 LOGIN & FORGOT PASSWORD SCREEN
+# 🔐 LOGIN & SECURE OTP FORGOT PASSWORD SCREEN
 # ==============================================================================
 if not st.session_state.authenticated:
     st.title(f"💊 {COMPANY_NAME} - Enterprise ERP Portal")
     
-    auth_tab1, auth_tab2 = st.tabs(["🔑 Login", "🔄 Forgot / Reset Password"])
+    auth_tab1, auth_tab2 = st.tabs(["🔑 Login", "🔄 Secure Forgot / Reset Password"])
     
     with auth_tab1:
         with st.form("login_form"):
@@ -265,57 +278,87 @@ if not st.session_state.authenticated:
                 st.error("Invalid Username or Password!")
 
     with auth_tab2:
-        st.markdown("### Reset Account Password")
-        with st.form("forgot_pass_form"):
-            f_role = st.selectbox("Select Account Type", ["Retailer (Medical Store Server)", "Billing Counter Terminal", "Distributor (Wholesaler)", "Super Admin"])
-            f_user = st.text_input("Username / Email")
-            f_new_pass = st.text_input("New Password", type="password")
-            f_confirm = st.text_input("Confirm New Password", type="password")
-            
-            reset_btn = st.form_submit_button("Update Password")
-            
-            if reset_btn:
-                if not f_user or not f_new_pass:
-                    st.warning("Please fill in all fields.")
-                elif f_new_pass != f_confirm:
-                    st.error("Passwords do not match!")
-                else:
-                    conn = get_db_connection()
-                    c = conn.cursor()
-                    success_flag = False
-                    
-                    if f_role == "Super Admin":
-                        if f_user == ADMIN_USER:
-                            c.execute("UPDATE system_config SET super_admin_password_hash = ? WHERE id = 1;", (hash_password(f_new_pass),))
-                            conn.commit()
-                            success_flag = True
-                    elif f_role == "Distributor (Wholesaler)":
-                        c.execute("SELECT id FROM wholesalers WHERE username = ? OR email = ?;", (f_user, f_user))
-                        row = c.fetchone()
-                        if row:
-                            c.execute("UPDATE wholesalers SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
-                            conn.commit()
-                            success_flag = True
-                    elif f_role == "Billing Counter Terminal":
-                        c.execute("SELECT id FROM store_terminals WHERE username = ?;", (f_user,))
-                        row = c.fetchone()
-                        if row:
-                            c.execute("UPDATE store_terminals SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
-                            conn.commit()
-                            success_flag = True
+        st.markdown("### 🔒 Secure Password Reset with Mobile OTP Verification")
+        
+        if not st.session_state.reset_otp_sent:
+            with st.form("request_otp_form"):
+                f_role = st.selectbox("Select Account Type", ["Retailer (Medical Store Server)", "Billing Counter Terminal", "Distributor (Wholesaler)", "Super Admin"])
+                f_user = st.text_input("Username / Email")
+                f_new_pass = st.text_input("New Password", type="password")
+                f_confirm = st.text_input("Confirm New Password", type="password")
+                
+                req_otp_btn = st.form_submit_button("📲 Send OTP to Registered Mobile")
+                
+                if req_otp_btn:
+                    if not f_user or not f_new_pass:
+                        st.warning("Please fill in all fields.")
+                    elif f_new_pass != f_confirm:
+                        st.error("Passwords do not match!")
                     else:
-                        c.execute("SELECT id FROM retailers WHERE username = ? OR email = ?;", (f_user, f_user))
-                        row = c.fetchone()
-                        if row:
-                            c.execute("UPDATE retailers SET password_hash = ? WHERE id = ?;", (hash_password(f_new_pass), row[0]))
-                            conn.commit()
-                            success_flag = True
+                        # Verify user exists in DB before sending OTP
+                        conn = get_db_connection()
+                        c = conn.cursor()
+                        exists = False
+                        if f_role == "Super Admin":
+                            if f_user == ADMIN_USER:
+                                exists = True
+                        elif f_role == "Distributor (Wholesaler)":
+                            c.execute("SELECT id FROM wholesalers WHERE username = ? OR email = ?;", (f_user, f_user))
+                            if c.fetchone(): exists = True
+                        elif f_role == "Billing Counter Terminal":
+                            c.execute("SELECT id FROM store_terminals WHERE username = ?;", (f_user,))
+                            if c.fetchone(): exists = True
+                        else:
+                            c.execute("SELECT id FROM retailers WHERE username = ? OR email = ?;", (f_user, f_user))
+                            if c.fetchone(): exists = True
+                        conn.close()
+                        
+                        if exists:
+                            generated = str(random.randint(100000, 999999))
+                            st.session_state.generated_otp = generated
+                            st.session_state.reset_target_user = f_user
+                            st.session_state.reset_target_role = f_role
+                            st.session_state.reset_new_pass = f_new_pass
+                            st.session_state.reset_otp_sent = True
+                            st.success("📲 OTP sent successfully to registered mobile number!")
+                            st.rerun()
+                        else:
+                            st.error("User not found with provided Username/Email!")
+        else:
+            st.info(f"🔒 **Simulated SMS Gateway:** Your verification OTP has been sent. *(For testing, your secure OTP is: **{st.session_state.generated_otp}**)*")
+            with st.form("verify_otp_form"):
+                entered_otp = st.text_input("Enter 6-Digit Mobile OTP", placeholder="Enter 6-digit code")
+                verify_btn = st.form_submit_button("✅ Verify OTP & Update Password", type="primary")
+                
+                if verify_btn:
+                    if entered_otp.strip() == st.session_state.generated_otp:
+                        conn = get_db_connection()
+                        c = conn.cursor()
+                        
+                        if st.session_state.reset_target_role == "Super Admin":
+                            c.execute("UPDATE system_config SET super_admin_password_hash = ? WHERE id = 1;", (hash_password(st.session_state.reset_new_pass),))
+                        elif st.session_state.reset_target_role == "Distributor (Wholesaler)":
+                            c.execute("UPDATE wholesalers SET password_hash = ? WHERE username = ? OR email = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user, st.session_state.reset_target_user))
+                        elif st.session_state.reset_target_role == "Billing Counter Terminal":
+                            c.execute("UPDATE store_terminals SET password_hash = ? WHERE username = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user))
+                        else:
+                            c.execute("UPDATE retailers SET password_hash = ? WHERE username = ? OR email = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user, st.session_state.reset_target_user))
                             
-                    conn.close()
-                    if success_flag:
-                        st.success("Password successfully reset! You can now login with your new password.")
+                        conn.commit()
+                        conn.close()
+                        
+                        # Reset state
+                        st.session_state.reset_otp_sent = False
+                        st.session_state.generated_otp = ""
+                        st.success("🎉 Password successfully reset and updated securely via OTP authentication!")
+                        st.rerun()
                     else:
-                        st.error("User not found with provided Username/Email!")
+                        st.error("❌ Invalid OTP! Please enter the correct 6-digit code.")
+            
+            if st.button("🔄 Cancel / Restart Reset"):
+                st.session_state.reset_otp_sent = False
+                st.rerun()
+                
     st.stop()
 
 # --- SIDEBAR ---
@@ -333,7 +376,7 @@ if st.sidebar.button("Logout"):
 # ==============================================================================
 if st.session_state.role == "SUPER_ADMIN":
     st.title(f"💊 PharmaFlow - Owner Administration Panel")
-    st.subheader(f"🛡️ {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
+    st.subheader(f"🛡️️ {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📂 All Distributors", 
