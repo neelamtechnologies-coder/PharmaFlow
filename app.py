@@ -41,7 +41,7 @@ def init_db():
             yearly_fee REAL DEFAULT 5999.0,
             enterprise_monthly_fee REAL DEFAULT 999.0,
             enterprise_yearly_fee REAL DEFAULT 9999.0,
-            client_backup_target TEXT DEFAULT '',
+            client_backup_target TEXT DEFAULT 'https://drive.google.com/drive/folders/default_backup',
             gemini_api_key TEXT DEFAULT '',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -61,7 +61,7 @@ def init_db():
     if "enterprise_yearly_fee" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN enterprise_yearly_fee REAL DEFAULT 9999.0;")
     if "client_backup_target" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT '';")
+        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT 'https://drive.google.com/drive/folders/default_backup';")
     if "gemini_api_key" not in columns:
         c.execute("ALTER TABLE system_config ADD COLUMN gemini_api_key TEXT DEFAULT '';")
     conn.commit()
@@ -70,7 +70,7 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute('''
             INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key)
-            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, '', '');
+            VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://drive.google.com/drive/folders/default_backup', '');
         ''')
         conn.commit()
 
@@ -203,7 +203,7 @@ else:
     YEARLY_FEE = 5999.0
     ENT_MONTHLY_FEE = 999.0
     ENT_YEARLY_FEE = 9999.0
-    CLIENT_BACKUP_TARGET = ""
+    CLIENT_BACKUP_TARGET = "https://drive.google.com/drive/folders/default_backup"
     MASTER_GEMINI_KEY = ""
 
 # ==============================================================================
@@ -334,9 +334,6 @@ if st.sidebar.button("Logout"):
 if st.session_state.role == "SUPER_ADMIN":
     st.title(f"💊 PharmaFlow - Owner Administration Panel")
     st.subheader(f"🛡️ {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
-
-    if not CLIENT_BACKUP_TARGET or CLIENT_BACKUP_TARGET == "":
-        st.error("🚨 **CRITICAL CONFIGURATION WARNING:** Client Backup Storage ID is mandatory! Until you configure a valid backup storage URL or Google Drive ID, system operations are restricted.")
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📂 All Distributors", 
@@ -565,32 +562,29 @@ if st.session_state.role == "SUPER_ADMIN":
             new_gemini_key = st.text_input("Gemini API Key", value=MASTER_GEMINI_KEY, type="password", help="Enter your Google AI Studio API key here so all retailers can use the AI bill scanner automatically.")
 
             st.markdown("---")
-            st.markdown("#### ☁️ MANDATORY Client Backup Storage Configuration")
-            new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook *", value=CLIENT_BACKUP_TARGET, help="Mandatory field. Client must provide their storage ID or Google Drive link.")
+            st.markdown("#### ☁️ Client Backup Storage Configuration")
+            new_backup_target = st.text_input("Client Backup Storage URL or Google Drive ID / Webhook", value=CLIENT_BACKUP_TARGET)
             
             if st.form_submit_button("Save All Variable Settings"):
-                if not new_backup_target or new_backup_target.strip() == "":
-                    st.error("Error: Client Backup Storage ID is mandatory and cannot be left blank!")
-                else:
-                    try:
-                        c = conn.cursor()
-                        if new_pwd:
-                            c.execute("""
-                                UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
-                                WHERE id = 1;
-                            """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
-                        else:
-                            c.execute("""
-                                UPDATE system_config 
-                                SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
-                                WHERE id = 1;
-                            """, (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
-                        conn.commit()
-                        st.success("Settings updated successfully! Rebooting application...")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                try:
+                    c = conn.cursor()
+                    if new_pwd:
+                        c.execute("""
+                            UPDATE system_config 
+                            SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                            WHERE id = 1;
+                        """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                    else:
+                        c.execute("""
+                            UPDATE system_config 
+                            SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                            WHERE id = 1;
+                        """, (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                    conn.commit()
+                    st.success("Settings updated successfully! Rebooting application...")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
     conn.close()
 
 # ==============================================================================
@@ -727,7 +721,7 @@ elif st.session_state.role == "WHOLESALER":
 
 # ==============================================================================
 # 🏥 RETAILER / MEDICAL STORE FULL ERP DASHBOARD (SERVER vs CLIENT TERMINAL)
-# ==============================================================================
+# ==============================================
 elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
     r_info = pd.read_sql_query("""
@@ -763,7 +757,7 @@ elif st.session_state.role == "RETAILER":
                 "📸 Scan & Upload Bill",
                 "🛒 Customer Billing", 
                 "📊 Dashboard & Alerts", 
-                "📦 90-Day Expiry Return",
+                "📦 30-Day & 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
                 "💻 Multi-System Terminals",
                 "💳 Payment & QR Code Wizard"
@@ -773,7 +767,7 @@ elif st.session_state.role == "RETAILER":
                 "📸 Scan & Upload Bill",
                 "🛒 Customer Billing", 
                 "📊 Dashboard & Alerts", 
-                "📦 90-Day Expiry Return",
+                "📦 30-Day & 90-Day Expiry Return",
                 "📥 Excel/CSV Import", 
                 "💳 Payment & QR Code Wizard"
             ])
@@ -1156,15 +1150,31 @@ elif st.session_state.role == "RETAILER":
     # TAB 4: NEAR EXPIRY
     if tab4 is not None:
         with tab4:
-            st.subheader("📦 90-Day Near Expiry Stock")
-            expiry_limit = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
-            df_exp = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, expiry_limit))
-            if not df_exp.empty:
-                df_exp.index = range(1, len(df_exp) + 1)
-                st.dataframe(df_exp, use_container_width=True)
-                st.warning("⚠️ Near expiry items identified for distributor return.")
+            st.subheader("📦 30-Day & 90-Day Expiry Return Reminders")
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            limit_30 = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+            limit_90 = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+            
+            exp_filter = st.radio("Select Expiry Window", ["⚠️ 30-Day Critical Expiry Return", "📦 90-Day Extended Expiry Return"], horizontal=True)
+            
+            if "30-Day" in exp_filter:
+                st.markdown("#### 🚨 Medicines Expiring Within the Next 30 Days (Immediate Return)")
+                df_exp30 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND expiry_date >= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_30, today_str))
+                if not df_exp30.empty:
+                    df_exp30.index = range(1, len(df_exp30) + 1)
+                    st.dataframe(df_exp30, use_container_width=True)
+                    st.warning("⚠️ Critical: These items must be returned to the distributor immediately to prevent financial loss.")
+                else:
+                    st.success("🎉 No items expiring in the next 30 days!")
             else:
-                st.success("No near-expiry items found.")
+                st.markdown("#### 📦 Medicines Expiring Within the Next 90 Days")
+                df_exp90 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_90))
+                if not df_exp90.empty:
+                    df_exp90.index = range(1, len(df_exp90) + 1)
+                    st.dataframe(df_exp90, use_container_width=True)
+                    st.warning("⚠️ Near expiry items identified for distributor return.")
+                else:
+                    st.success("No near-expiry items found.")
 
     # TAB 5: EXCEL IMPORT
     if tab5 is not None:
@@ -1207,7 +1217,7 @@ elif st.session_state.role == "RETAILER":
             else:
                 st.info("No additional billing counters registered yet.")
 
-    # TAB 7 / LAST: PERSISTENT PAYMENT WIZARD & WHATSAPP SHARING
+    # TAB 7 / LAST: PAYMENT REQUEST & WHATSAPP APPROVAL WORKFLOW
     target_sub_tab = tab7 if tab7 is not None else tab6
     if target_sub_tab is not None:
         with target_sub_tab:
@@ -1218,7 +1228,6 @@ elif st.session_state.role == "RETAILER":
             if r_payment_status == 'PENDING_APPROVAL':
                 st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
                 
-                # Retrieve the last submitted UTR message if pending
                 wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
                 wa_msg += f"🏥 Store Name: {r_store}\n"
                 wa_msg += f"📦 System Architecture: {r_store_type}\n"
