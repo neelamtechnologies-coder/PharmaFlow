@@ -178,7 +178,7 @@ if "scanned_data" not in st.session_state:
 if "last_invoice" not in st.session_state:
     st.session_state.last_invoice = None
 
-# Session state for secure OTP reset flow
+# Session state for secure WhatsApp OTP reset flow
 if "reset_otp_sent" not in st.session_state:
     st.session_state.reset_otp_sent = False
 if "generated_otp" not in st.session_state:
@@ -189,6 +189,8 @@ if "reset_target_role" not in st.session_state:
     st.session_state.reset_target_role = ""
 if "reset_new_pass" not in st.session_state:
     st.session_state.reset_new_pass = ""
+if "reset_wa_link" not in st.session_state:
+    st.session_state.reset_wa_link = ""
 
 conn = get_db_connection()
 config_df = pd.read_sql_query("SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;", conn)
@@ -220,7 +222,7 @@ else:
     MASTER_GEMINI_KEY = ""
 
 # ==============================================================================
-# 🔐 LOGIN & SECURE OTP FORGOT PASSWORD SCREEN
+# 🔐 LOGIN & SECURE WHATSAPP OTP FORGOT PASSWORD SCREEN
 # ==============================================================================
 if not st.session_state.authenticated:
     st.title(f"💊 {COMPANY_NAME} - Enterprise ERP Portal")
@@ -278,7 +280,7 @@ if not st.session_state.authenticated:
                 st.error("Invalid Username or Password!")
 
     with auth_tab2:
-        st.markdown("### 🔒 Secure Password Reset with Mobile OTP Verification")
+        st.markdown("### 🔒 Secure Password Reset with WhatsApp OTP")
         
         if not st.session_state.reset_otp_sent:
             with st.form("request_otp_form"):
@@ -287,7 +289,7 @@ if not st.session_state.authenticated:
                 f_new_pass = st.text_input("New Password", type="password")
                 f_confirm = st.text_input("Confirm New Password", type="password")
                 
-                req_otp_btn = st.form_submit_button("📲 Send OTP to Registered Mobile")
+                req_otp_btn = st.form_submit_button("💬 Send OTP via WhatsApp")
                 
                 if req_otp_btn:
                     if not f_user or not f_new_pass:
@@ -295,7 +297,6 @@ if not st.session_state.authenticated:
                     elif f_new_pass != f_confirm:
                         st.error("Passwords do not match!")
                     else:
-                        # Verify user exists in DB before sending OTP
                         conn = get_db_connection()
                         c = conn.cursor()
                         exists = False
@@ -319,15 +320,30 @@ if not st.session_state.authenticated:
                             st.session_state.reset_target_user = f_user
                             st.session_state.reset_target_role = f_role
                             st.session_state.reset_new_pass = f_new_pass
+                            
+                            otp_msg = f"🔐 *Password Reset OTP*\nYour verification OTP for {COMPANY_NAME} account ({f_user}) is: *{generated}*\nDo not share this OTP with anyone."
+                            encoded_otp_msg = urllib.parse.quote(otp_msg)
+                            st.session_state.reset_wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_otp_msg}"
+                            
                             st.session_state.reset_otp_sent = True
-                            st.success("📲 OTP sent successfully to registered mobile number!")
+                            st.success("📲 OTP generated! Click the WhatsApp button below to receive your OTP.")
                             st.rerun()
                         else:
                             st.error("User not found with provided Username/Email!")
         else:
-            st.info(f"🔒 **Simulated SMS Gateway:** Your verification OTP has been sent. *(For testing, your secure OTP is: **{st.session_state.generated_otp}**)*")
+            st.warning("⚠️ **Step 2:** Click the button below to open WhatsApp and send the OTP to your registered phone, then enter the 6-digit code below:")
+            st.markdown(f"""
+            <div style="margin-bottom: 20px; text-align: center;">
+                <a href="{st.session_state.reset_wa_link}" target="_blank" style="text-decoration: none;">
+                    <button style="background-color:#25D366; color:white; padding:12px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
+                        💬 Click here to receive OTP on WhatsApp
+                    </button>
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
+            
             with st.form("verify_otp_form"):
-                entered_otp = st.text_input("Enter 6-Digit Mobile OTP", placeholder="Enter 6-digit code")
+                entered_otp = st.text_input("Enter 6-Digit WhatsApp OTP", placeholder="Enter 6-digit code received on WhatsApp")
                 verify_btn = st.form_submit_button("✅ Verify OTP & Update Password", type="primary")
                 
                 if verify_btn:
@@ -347,10 +363,9 @@ if not st.session_state.authenticated:
                         conn.commit()
                         conn.close()
                         
-                        # Reset state
                         st.session_state.reset_otp_sent = False
                         st.session_state.generated_otp = ""
-                        st.success("🎉 Password successfully reset and updated securely via OTP authentication!")
+                        st.success("🎉 Password successfully reset and updated securely via WhatsApp OTP verification!")
                         st.rerun()
                     else:
                         st.error("❌ Invalid OTP! Please enter the correct 6-digit code.")
@@ -787,7 +802,7 @@ elif st.session_state.role == "RETAILER":
     st.success(f"System Type: **{r_store_type}** | Status: **{r_status}** (Payment: {r_payment_status}) | Valid Till: **{r_expiry}**")
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"🛠️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
+    st.sidebar.markdown(f"🛠️️ **Ground Support Partner:**\n{support_partner}\n📞 Contact: {support_phone}")
     
     # --- ROLE SEGREGATION: SERVER vs CLIENT ---
     if st.session_state.terminal_type == "CLIENT":
