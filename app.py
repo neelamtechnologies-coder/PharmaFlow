@@ -560,4 +560,227 @@ elif st.session_state.role == "WHOLESALER":
                     st.rerun()
                     
                 if delete_r:
-                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%
+                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
+                    is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
+                    is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
+                    is_expired = expiry_dt < datetime.now()
+                    
+                    if is_trial or is_pending or is_expired:
+                        c = conn.cursor()
+                        c.execute("DELETE FROM retailers WHERE id = ? AND wholesaler_id = ?;", (sel_r_id, st.session_state.user_id))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Retailer successfully deleted as plan is in Trial, Pending, or Expired!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription.")
+        else:
+            st.info("No retailers in your network to edit.")
+    conn.close()
+
+# ==============================================================================
+# 🛡️ SUPER ADMIN (OWNER) DASHBOARD
+# ==============================================
+elif st.session_state.role == "SUPER_ADMIN":
+    st.title(f"💊 PharmaFlow - Owner Administration Panel")
+    st.subheader(f"🛡 {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📂 All Distributors", 
+        "➕ Add Distributor", 
+        "🏥 All Retailers & Approvals",
+        "✏️ Master Edit & Subscriptions",
+        "🔄 Variable Pricing & Plans",
+        "⚙️ White-Label & Variable Pricing Setup"
+    ])
+
+    conn = get_db_connection()
+    with tab1:
+        st.markdown("### Registered Distributors (Support Partners)")
+        w_df = pd.read_sql_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate, created_at FROM wholesalers ORDER BY company_name ASC;", conn)
+        if not w_df.empty:
+            st.dataframe(w_df, use_container_width=True)
+        else:
+            st.info("No distributors registered yet.")
+
+    with tab2:
+        st.markdown("### Register New Distributor")
+        with st.form("add_distributor_form"):
+            c_name = st.text_input("Distributor Agency Name")
+            o_name = st.text_input("Owner / Contact Person Name")
+            email = st.text_input("Email (Unique)")
+            phone = st.text_input("Phone Number")
+            w_user = st.text_input("Distributor Username")
+            w_pass = st.text_input("Distributor Password", type="password")
+            comm = st.number_input("Commission Share (%)", value=10.0)
+            
+            submit_dist = st.form_submit_button("Create Distributor")
+            if submit_dist:
+                if c_name and email and w_user and w_pass:
+                    try:
+                        c = conn.cursor()
+                        c.execute("""
+                            INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (c_name, o_name, email, phone, w_user, hash_password(w_pass), comm))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success(f"Distributor '{c_name}' successfully added!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Please fill in all required fields.")
+
+    with tab3:
+        st.markdown("### 🏥 All Medical Stores & Payment Approvals")
+        r_df = pd.read_sql_query("""
+            SELECT r.id, r.store_name, r.owner_name, r.phone, r.store_type, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
+            FROM retailers r
+            LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
+            ORDER BY r.store_name ASC;
+        """, conn)
+        if not r_df.empty:
+            st.dataframe(r_df, use_container_width=True)
+            
+            st.markdown("---")
+            st.markdown("### ✅ Verify UTR & Approve Plan Extension")
+            pending_df = r_df[r_df['payment_status'] == 'PENDING_APPROVAL']
+            if not pending_df.empty:
+                p_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in pending_df.iterrows()}
+                sel_p_str = st.selectbox("Select Store Requesting Approval", list(p_opts.keys()))
+                sel_p_id = p_opts[sel_p_str]
+                
+                add_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"])
+                
+                if st.button("✅ Verify Payment & Activate Plan", type="primary"):
+                    c = conn.cursor()
+                    if add_period == "1 Month":
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
+                    else:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Payment verified and plan successfully activated!")
+                    st.rerun()
+            else:
+                st.info("No pending payment approval requests.")
+        else:
+            st.info("No retailers registered yet.")
+
+    with tab4:
+        st.markdown("### ✏️ Master Edit: Subscriptions, Status & Passwords (Admin Only)")
+        ret_list = pd.read_sql_query("SELECT id, store_name, phone, store_type, subscription_status, payment_status, plan_expiry_date FROM retailers ORDER BY store_name ASC;", conn)
+        if not ret_list.empty:
+            r_opts = {f"{row['store_name']} (Type: {row['store_type']}, Status: {row['subscription_status']})": row['id'] for _, row in ret_list.iterrows()}
+            sel_r_str = st.selectbox("Select Retailer for Master Control", list(r_opts.keys()))
+            sel_r_id = r_opts[sel_r_str]
+            
+            curr_r = ret_list[ret_list['id'] == sel_r_id].iloc[0]
+            
+            with st.form("admin_edit_ret_form"):
+                ed_sname = st.text_input("Store Name", value=curr_r['store_name'])
+                ed_phone = st.text_input("Phone Number (for WhatsApp OTP)", value=str(curr_r['phone'] or ''))
+                ed_stype = st.selectbox("Store Architecture / System Type", ["SINGLE", "ENTERPRISE"], index=["SINGLE", "ENTERPRISE"].index(curr_r['store_type']) if curr_r['store_type'] in ["SINGLE", "ENTERPRISE"] else 0)
+                ed_status = st.selectbox("Subscription Status", ["ACTIVE", "TRIAL", "EXPIRED"], index=["ACTIVE", "TRIAL", "EXPIRED"].index(curr_r['subscription_status']) if curr_r['subscription_status'] in ["ACTIVE", "TRIAL", "EXPIRED"] else 0)
+                ed_expiry = st.text_input("Plan Expiry Date (YYYY-MM-DD)", value=str(curr_r['plan_expiry_date'])[:10] if curr_r['plan_expiry_date'] else "")
+                ed_rpass = st.text_input("New Password (leave blank to keep current)", type="password")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_r = st.form_submit_button("Update Master Settings", type="primary")
+                with col2:
+                    delete_r = st.form_submit_button("🗑️ Delete Retailer (Trial/Pending/Expired Only)")
+                    
+                if update_r:
+                    c = conn.cursor()
+                    if ed_rpass:
+                        c.execute("UPDATE retailers SET store_name = ?, phone = ?, store_type = ?, subscription_status = ?, plan_expiry_date = ?, password_hash = ? WHERE id = ?;", (ed_sname, ed_phone.strip(), ed_stype, ed_status, ed_expiry.strip(), hash_password(ed_rpass), sel_r_id))
+                    else:
+                        c.execute("UPDATE retailers SET store_name = ?, phone = ?, store_type = ?, subscription_status = ?, plan_expiry_date = ? WHERE id = ?;", (ed_sname, ed_phone.strip(), ed_stype, ed_status, ed_expiry.strip(), sel_r_id))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Retailer master settings successfully updated!")
+                    st.rerun()
+                    
+                if delete_r:
+                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date'])[:10], '%Y-%m-%d') if curr_r['plan_expiry_date'] else datetime.now()
+                    is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
+                    is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
+                    is_expired = expiry_dt < datetime.now()
+                    
+                    if is_trial or is_pending or is_expired:
+                        c = conn.cursor()
+                        c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Retailer successfully deleted!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription.")
+        else:
+            st.info("No retailers available to edit.")
+
+    with tab5:
+        st.markdown("### Variable Subscription Pricing & Master Override")
+        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
+        
+        retailers_list = pd.read_sql_query("SELECT id, store_name, store_type FROM retailers ORDER BY store_name ASC;", conn)
+        if not retailers_list.empty:
+            r_opts = {f"{row['store_name']} ({row['store_type']})": row['id'] for _, row in retailers_list.iterrows()}
+            sel_r = st.selectbox("Select Retailer for Plan Override", list(r_opts.keys()))
+            r_id = r_opts[sel_r]
+            
+            curr_type = pd.read_sql_query("SELECT store_type FROM retailers WHERE id = ?;", conn, params=(r_id,)).iloc[0]["store_type"]
+            
+            if curr_type == "ENTERPRISE":
+                period = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+            else:
+                period = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+            
+            if st.button("⚡ Verify & Extend Plan", type="primary"):
+                c = conn.cursor()
+                if "1 Month" in period:
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                else:
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                conn.commit()
+                trigger_dual_backup()
+                st.success("Plan extended successfully!")
+                st.rerun()
+        else:
+            st.info("Please register a retailer before processing.")
+
+    with tab6:
+        st.markdown("### ⚙️ White-Label & Variable Market Pricing Setup")
+        with st.form("settings_form"):
+            new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
+            new_user = st.text_input("Admin Username", value=ADMIN_USER)
+            new_pwd = st.text_input("New Admin Password (leave blank to keep current)", type="password")
+            new_upi = st.text_input("Official Business UPI ID (for direct payments)", value=OWNER_UPI)
+            new_phone = st.text_input("Admin WhatsApp Phone Number (with Country Code, e.g. 919876543210)", value=ADMIN_PHONE)
+            
+            st.markdown("---")
+            st.markdown("#### 💰 Variable Subscription Pricing Control (Market-wise)")
+            st.markdown("##### 🖥️ Single System Plan")
+            new_monthly = st.number_input("Single Monthly Fee (₹)", value=MONTHLY_FEE)
+            new_yearly = st.number_input("Single Yearly Fee (₹)", value=YEARLY_FEE)
+            
+            st.markdown("##### 💻💻 Multi System (Enterprise Server/Client) Plan")
+            new_ent_monthly = st.number_input("Multi System Monthly Fee (₹)", value=ENT_MONTHLY_FEE)
+            new_ent_yearly = st.number_input("Multi System Yearly Fee (₹)", value=ENT_YEARLY_FEE)
+            
+            st.markdown("---")
+            st.markdown("#### 🤖 Master Gemini API Key (Central Scanner Key)")
+            new_gemini_key = st.text_input("Gemini API Key", value=MASTER_GEMINI_KEY, type="password", help="Enter your Google AI Studio API key here so all retailers can use the AI bill scanner automatically.")
+
+            st.markdown("---")
+            st.markdown("#### ☁️ AWS S3 Cloud Backup Storage Configuration")
+            new_backup_target = st.text_input("AWS S3 Cloud Backup Bucket URL / Endpoint", value=CLIENT_BACKUP_TARGET)
+            
+            if st.form_submit_button("Save All Variable Settings"):
+                try:
+                    c = conn.cursor()
+                    if new_pwd:
+                        c.execute("""
+                            UPDATE system
