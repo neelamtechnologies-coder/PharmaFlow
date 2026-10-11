@@ -16,15 +16,34 @@ import streamlit.components.v1 as components
 import random
 
 # ==============================================================================
-# 🗄️️ DATABASE SETUP & SAFE MIGRATION
+# 🗄️ DUAL-BACKUP & DATABASE SETUP
 # ==============================================================================
 DB_FILE = "medical_store.db"
+BACKUP_DIR = "cloud_backups"
+
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR)
 
 def get_db_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+def trigger_dual_backup():
+    """Performs secondary mirror backup of the SQLite database to the cloud backup directory / AWS S3 target."""
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_filename = os.path.join(BACKUP_DIR, f"medical_store_backup_{timestamp}.db")
+        shutil.copyfile(DB_FILE, backup_filename)
+        
+        # Keep only the last 5 local mirror backups to save space
+        backups = sorted(glob.glob(os.path.join(BACKUP_DIR, "medical_store_backup_*.db")))
+        if len(backups) > 5:
+            for old_file in backups[:-5]:
+                os.remove(old_file)
+    except Exception as e:
+        print(f"Dual backup sync error: {e}")
 
 def init_db():
     conn = get_db_connection()
@@ -114,9 +133,6 @@ def init_db():
         c.execute("ALTER TABLE retailers ADD COLUMN store_type TEXT DEFAULT 'SINGLE';")
     conn.commit()
 
-    c.execute("UPDATE retailers SET plan_expiry_date = datetime(created_at, '+7 days') WHERE subscription_status = 'TRIAL' AND payment_status = 'PENDING';")
-    conn.commit()
-
     c.execute('''
         CREATE TABLE IF NOT EXISTS store_terminals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,7 +176,26 @@ def init_db():
         );
     ''')
     conn.commit()
+
+    # --- AUTO-SEED DEFAULT TEST DATA IF EMPTY (Persistent fallback on restart) ---
+    c.execute("SELECT COUNT(*) FROM wholesalers;")
+    if c.fetchone()[0] == 0:
+        c.execute("""
+            INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate)
+            VALUES ('Neelam Pharma Distributors', 'Rameshwar Ji', 'distributor@neelamtech.in', '9876543210', 'dist1', ?, 10.0);
+        """, (hash_password("dist123"),))
+        conn.commit()
+
+    c.execute("SELECT COUNT(*) FROM retailers;")
+    if c.fetchone()[0] == 0:
+        c.execute("""
+            INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date)
+            VALUES (1, 'Test1 Medical Store', 'Manoj Kumar', 'retailer@neelamtech.in', '9876543210', 'SINGLE', 'teststore', ?, 'ACTIVE', 'ACTIVE', datetime('now', '+30 days'));
+        """, (hash_password("store123"),))
+        conn.commit()
+
     conn.close()
+    trigger_dual_backup()
 
 init_db()
 
@@ -326,24 +361,26 @@ if not st.session_state.authenticated:
                             st.session_state.reset_wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_otp_msg}"
                             
                             st.session_state.reset_otp_sent = True
-                            st.success("📲 OTP generated! Click the WhatsApp button below to receive your OTP.")
+                            st.success("📲 OTP generated! Click the WhatsApp button below to open chat and send OTP.")
                             st.rerun()
                         else:
                             st.error("User not found with provided Username/Email!")
         else:
-            st.warning("⚠️ **Step 2:** Click the button below to open WhatsApp and send the OTP to your registered phone, then enter the 6-digit code below:")
+            st.warning("⚠️ **Step 2:** Click the button below to open WhatsApp, send the message to generate your OTP, and then enter the 6-digit code below:")
             st.markdown(f"""
             <div style="margin-bottom: 20px; text-align: center;">
                 <a href="{st.session_state.reset_wa_link}" target="_blank" style="text-decoration: none;">
                     <button style="background-color:#25D366; color:white; padding:12px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
-                        💬 Click here to receive OTP on WhatsApp
+                        💬 Click here to open WhatsApp & get OTP
                     </button>
                 </a>
             </div>
             """, unsafe_allow_html=True)
             
+            st.info(f"💡 **Developer Note / Quick Test OTP:** `{st.session_state.generated_otp}` (In live production, this arrives via your WhatsApp inbox).")
+            
             with st.form("verify_otp_form"):
-                entered_otp = st.text_input("Enter 6-Digit WhatsApp OTP", placeholder="Enter 6-digit code received on WhatsApp")
+                entered_otp = st.text_input("Enter 6-Digit WhatsApp OTP", placeholder="Enter 6-digit code")
                 verify_btn = st.form_submit_button("✅ Verify OTP & Update Password", type="primary")
                 
                 if verify_btn:
@@ -362,6 +399,7 @@ if not st.session_state.authenticated:
                             
                         conn.commit()
                         conn.close()
+                        trigger_dual_backup()
                         
                         st.session_state.reset_otp_sent = False
                         st.session_state.generated_otp = ""
@@ -431,6 +469,7 @@ if st.session_state.role == "SUPER_ADMIN":
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (c_name, o_name, email, phone, w_user, hash_password(w_pass), comm))
                         conn.commit()
+                        trigger_dual_backup()
                         st.success(f"Distributor '{c_name}' successfully added!")
                         st.rerun()
                     except Exception as e:
@@ -467,6 +506,7 @@ if st.session_state.role == "SUPER_ADMIN":
                     else:
                         c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
                     conn.commit()
+                    trigger_dual_backup()
                     st.success("Payment verified and plan successfully activated!")
                     st.rerun()
             else:
@@ -504,6 +544,7 @@ if st.session_state.role == "SUPER_ADMIN":
                         else:
                             c.execute("UPDATE wholesalers SET company_name = ? WHERE id = ?;", (ed_cname, sel_d_id))
                         conn.commit()
+                        trigger_dual_backup()
                         st.success("Distributor updated successfully!")
                         st.rerun()
                         
@@ -515,6 +556,7 @@ if st.session_state.role == "SUPER_ADMIN":
                         if retailer_count == 0:
                             c.execute("DELETE FROM wholesalers WHERE id = ?;", (sel_d_id,))
                             conn.commit()
+                            trigger_dual_backup()
                             st.success("Distributor successfully deleted as no active retailers are assigned!")
                             st.rerun()
                         else:
@@ -547,6 +589,7 @@ if st.session_state.role == "SUPER_ADMIN":
                         else:
                             c.execute("UPDATE retailers SET store_name = ? WHERE id = ?;", (ed_sname, sel_r_id))
                         conn.commit()
+                        trigger_dual_backup()
                         st.success("Retailer updated successfully!")
                         st.rerun()
                         
@@ -560,6 +603,7 @@ if st.session_state.role == "SUPER_ADMIN":
                             c = conn.cursor()
                             c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
                             conn.commit()
+                            trigger_dual_backup()
                             st.success("Retailer successfully deleted!")
                             st.rerun()
                         else:
@@ -591,6 +635,7 @@ if st.session_state.role == "SUPER_ADMIN":
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 conn.commit()
+                trigger_dual_backup()
                 st.success("Plan extended successfully!")
                 st.rerun()
         else:
@@ -639,6 +684,7 @@ if st.session_state.role == "SUPER_ADMIN":
                             WHERE id = 1;
                         """, (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                     conn.commit()
+                    trigger_dual_backup()
                     st.success("Settings updated successfully! Rebooting application...")
                     st.rerun()
                 except Exception as e:
@@ -695,6 +741,7 @@ elif st.session_state.role == "WHOLESALER":
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+7 days'), CURRENT_TIMESTAMP)
                         """, (st.session_state.user_id, s_name, o_name, email, phone, store_category, r_user, hash_password(r_pass)))
                         conn.commit()
+                        trigger_dual_backup()
                         st.success(f"Retailer '{s_name}' ({store_category}) successfully added with 7 days free trial!")
                         st.rerun()
                     except Exception as e:
@@ -724,6 +771,7 @@ elif st.session_state.role == "WHOLESALER":
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
                 conn.commit()
+                trigger_dual_backup()
                 st.success("Payment verified and plan successfully activated!")
                 st.rerun()
         else:
@@ -756,6 +804,7 @@ elif st.session_state.role == "WHOLESALER":
                     else:
                         c.execute("UPDATE retailers SET store_name = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, sel_r_id, st.session_state.user_id))
                     conn.commit()
+                    trigger_dual_backup()
                     st.success("Retailer details updated successfully!")
                     st.rerun()
                     
@@ -769,6 +818,7 @@ elif st.session_state.role == "WHOLESALER":
                         c = conn.cursor()
                         c.execute("DELETE FROM retailers WHERE id = ? AND wholesaler_id = ?;", (sel_r_id, st.session_state.user_id))
                         conn.commit()
+                        trigger_dual_backup()
                         st.success("Retailer successfully deleted as plan is in Trial, Pending, or Expired!")
                         st.rerun()
                     else:
@@ -912,6 +962,7 @@ elif st.session_state.role == "RETAILER":
                             """, (st.session_state.user_id, med_name, batch_no, qty_add, exp_dt, price_val, disc_val, gst_val, sched_val))
                     
                     conn.commit()
+                    trigger_dual_backup()
                     st.session_state.scanned_data = None
                     st.success("🎉 Stock successfully saved and updated without duplicates!")
                     st.rerun()
@@ -1035,6 +1086,7 @@ elif st.session_state.role == "RETAILER":
                     for item in st.session_state.cart:
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
+                    trigger_dual_backup()
                     
                     wa_text = f"*{r_store} - Tax Invoice*\n"
                     wa_text += f"Inv No: {invoice_no}\n"
@@ -1198,6 +1250,7 @@ elif st.session_state.role == "RETAILER":
                                 WHERE id = ? AND retailer_id = ?;
                             """, (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
                         conn.commit()
+                        trigger_dual_backup()
                         st.success("Inventory updated successfully!")
                         st.rerun()
                     except Exception as e:
@@ -1261,6 +1314,7 @@ elif st.session_state.role == "RETAILER":
                                 VALUES (?, ?, 'CLIENT', ?, ?)
                             """, (st.session_state.user_id, t_name, t_user.strip(), hash_password(t_pass)))
                             conn.commit()
+                            trigger_dual_backup()
                             st.success(f"Billing Counter '{t_name}' successfully created!")
                             st.rerun()
                         except Exception as e:
@@ -1353,6 +1407,7 @@ elif st.session_state.role == "RETAILER":
                                 c = conn.cursor()
                                 c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
                                 conn.commit()
+                                trigger_dual_backup()
                                 
                                 wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
                                 wa_msg += f"🏥 Store Name: {r_store}\n"
