@@ -511,11 +511,11 @@ elif st.session_state.role == "WHOLESALER":
             sel_mp_str = st.selectbox("Select Store Requesting Approval", list(mp_opts.keys()))
             sel_mp_id = mp_opts[sel_mp_str]
             
-            mp_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"], key="wholesaler_period")
+            add_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"], key="wholesaler_period")
             
             if st.button("✅ Verify Payment & Activate Plan", type="primary", key="wholesaler_verify_btn"):
                 c = conn.cursor()
-                if mp_period == "1 Month":
+                if add_period == "1 Month":
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
@@ -560,96 +560,4 @@ elif st.session_state.role == "WHOLESALER":
                     st.rerun()
                     
                 if delete_r:
-                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
-                    is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
-                    is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
-                    is_expired = expiry_dt < datetime.now()
-                    
-                    if is_trial or is_pending or is_expired:
-                        c = conn.cursor()
-                        c.execute("DELETE FROM retailers WHERE id = ? AND wholesaler_id = ?;", (sel_r_id, st.session_state.user_id))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success("Retailer successfully deleted as plan is in Trial, Pending, or Expired!")
-                        st.rerun()
-                    else:
-                        st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription.")
-        else:
-            st.info("No retailers in your network to edit.")
-    conn.close()
-
-# ==============================================================================
-# 🛡️ SUPER ADMIN (OWNER) DASHBOARD
-# ==============================================
-elif st.session_state.role == "SUPER_ADMIN":
-    st.title(f"💊 PharmaFlow - Owner Administration Panel")
-    st.subheader(f"🛡 {COMPANY_NAME} | Central Control & Enterprise Multi-Terminal Management")
-
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📂 All Distributors", 
-        "➕ Add Distributor", 
-        "🏥 All Retailers & Approvals",
-        "✏️ Master Edit & Subscriptions",
-        "🔄 Variable Pricing & Plans",
-        "⚙️ White-Label & Variable Pricing Setup"
-    ])
-
-    conn = get_db_connection()
-    with tab1:
-        st.markdown("### Registered Distributors (Support Partners)")
-        w_df = pd.read_sql_query("SELECT id, company_name, owner_name, email, phone, username, commission_rate, created_at FROM wholesalers ORDER BY company_name ASC;", conn)
-        if not w_df.empty:
-            st.dataframe(w_df, use_container_width=True)
-        else:
-            st.info("No distributors registered yet.")
-
-    with tab2:
-        st.markdown("### Register New Distributor")
-        with st.form("add_distributor_form"):
-            c_name = st.text_input("Distributor Agency Name")
-            o_name = st.text_input("Owner / Contact Person Name")
-            email = st.text_input("Email (Unique)")
-            phone = st.text_input("Phone Number")
-            w_user = st.text_input("Distributor Username")
-            w_pass = st.text_input("Distributor Password", type="password")
-            comm = st.number_input("Commission Share (%)", value=10.0)
-            
-            submit_dist = st.form_submit_button("Create Distributor")
-            if submit_dist:
-                if c_name and email and w_user and w_pass:
-                    try:
-                        c = conn.cursor()
-                        c.execute("""
-                            INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (c_name, o_name, email, phone, w_user, hash_password(w_pass), comm))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success(f"Distributor '{c_name}' successfully added!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                else:
-                    st.warning("Please fill in all required fields.")
-
-    with tab3:
-        st.markdown("### 🏥 All Medical Stores & Payment Approvals")
-        r_df = pd.read_sql_query("""
-            SELECT r.id, r.store_name, r.owner_name, r.phone, r.store_type, r.subscription_status, r.payment_status, r.plan_expiry_date, w.company_name as assigned_distributor
-            FROM retailers r
-            LEFT JOIN wholesalers w ON r.wholesaler_id = w.id
-            ORDER BY r.store_name ASC;
-        """, conn)
-        if not r_df.empty:
-            st.dataframe(r_df, use_container_width=True)
-            
-            st.markdown("---")
-            st.markdown("### ✅ Verify UTR & Approve Plan Extension")
-            pending_df = r_df[r_df['payment_status'] == 'PENDING_APPROVAL']
-            if not pending_df.empty:
-                p_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in pending_df.iterrows()}
-                sel_p_str = st.selectbox("Select Store Requesting Approval", list(p_opts.keys()))
-                sel_p_id = p_opts[sel_p_str]
-                
-                store_type_val = pending_df[pending_df['id'] == sel_p_id].iloc[0]['store_type']
-                add_period = st.radio("
+                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']),
