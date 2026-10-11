@@ -330,7 +330,7 @@ if not st.session_state.authenticated:
                     else:
                         conn = get_db_connection()
                         c = conn.cursor()
-                        target_phone = ADMIN_PHONE
+                        target_phone = None
                         exists = False
                         
                         if f_role == "Super Admin":
@@ -340,9 +340,9 @@ if not st.session_state.authenticated:
                         elif f_role == "Distributor (Wholesaler)":
                             c.execute("SELECT phone FROM wholesalers WHERE username = ? OR email = ?;", (f_user, f_user))
                             row = c.fetchone()
-                            if row:
+                            if row and row[0] and str(row[0]).strip() != "":
                                 exists = True
-                                target_phone = row[0] or ADMIN_PHONE
+                                target_phone = str(row[0]).strip()
                         elif f_role == "Billing Counter Terminal":
                             c.execute("""
                                 SELECT r.phone FROM store_terminals st 
@@ -350,18 +350,18 @@ if not st.session_state.authenticated:
                                 WHERE st.username = ?;
                             """, (f_user,))
                             row = c.fetchone()
-                            if row:
+                            if row and row[0] and str(row[0]).strip() != "":
                                 exists = True
-                                target_phone = row[0] or ADMIN_PHONE
+                                target_phone = str(row[0]).strip()
                         else:
                             c.execute("SELECT phone FROM retailers WHERE username = ? OR email = ?;", (f_user, f_user))
                             row = c.fetchone()
-                            if row:
+                            if row and row[0] and str(row[0]).strip() != "":
                                 exists = True
-                                target_phone = row[0] or ADMIN_PHONE
+                                target_phone = str(row[0]).strip()
                         conn.close()
                         
-                        if exists:
+                        if exists and target_phone:
                             generated = str(random.randint(100000, 999999))
                             st.session_state.generated_otp = generated
                             st.session_state.reset_target_user = f_user
@@ -370,16 +370,16 @@ if not st.session_state.authenticated:
                             
                             otp_msg = f"🔐 *Password Reset OTP*\nYour verification OTP for {COMPANY_NAME} account ({f_user}) is: *{generated}*\nDo not share this OTP with anyone."
                             encoded_otp_msg = urllib.parse.quote(otp_msg)
-                            clean_target_phone = "".join(filter(str.isdigit, str(target_phone)))
+                            clean_target_phone = "".join(filter(str.isdigit, target_phone))
                             st.session_state.reset_wa_link = f"https://wa.me/{clean_target_phone}?text={encoded_otp_msg}"
                             
                             st.session_state.reset_otp_sent = True
-                            st.success("📲 OTP generated! Click the WhatsApp button below to open chat and send OTP to the user's phone.")
+                            st.success(f"📲 OTP generated for user phone ({target_phone})! Click the WhatsApp button below to open chat and send OTP.")
                             st.rerun()
                         else:
-                            st.error("User not found with provided Username/Email!")
+                            st.error("❌ User not found OR registered mobile number is missing for this user! Please update the user's phone number first.")
         else:
-            st.warning("⚠️ **Step 2:** Click the button below to open WhatsApp on the user's phone, send the message to generate your OTP, and then enter the 6-digit code below:")
+            st.warning("⚠️ **Step 2:** Click the button below to open WhatsApp with the user's registered number, send the message to generate your OTP, and then enter the 6-digit code below:")
             st.markdown(f"""
             <div style="margin-bottom: 20px; text-align: center;">
                 <a href="{st.session_state.reset_wa_link}" target="_blank" style="text-decoration: none;">
@@ -693,9 +693,9 @@ if st.session_state.role == "SUPER_ADMIN":
                     else:
                         c.execute("""
                             UPDATE system_config 
-                            SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
+                            SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                             WHERE id = 1;
-                        """, (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                        """, (new_comp, new_user, hash_password(new_pwd), new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                     conn.commit()
                     trigger_dual_backup()
                     st.success("Settings updated successfully! Rebooting application...")
@@ -1360,128 +1360,4 @@ elif st.session_state.role == "RETAILER":
                                 c.execute("UPDATE store_terminals SET password_hash = ? WHERE id = ? AND retailer_id = ?;", (hash_password(new_t_pass), sel_term_id, st.session_state.user_id))
                                 conn.commit()
                                 trigger_dual_backup()
-                                st.success("Billing counter password successfully updated! The employee will now need the new password to login.")
-                                st.rerun()
-                                
-                        if delete_t_btn:
-                            c.execute("DELETE FROM store_terminals WHERE id = ? AND retailer_id = ?;", (sel_term_id, st.session_state.user_id))
-                            conn.commit()
-                            trigger_dual_backup()
-                            st.success("Billing counter terminal successfully deleted!")
-                            st.rerun()
-                else:
-                    st.info("No billing counters available to modify.")
-            
-            st.markdown("---")
-            st.markdown("### Existing Billing Counters")
-            terminals_df = pd.read_sql_query("SELECT id, terminal_name, username, created_at FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-            if not terminals_df.empty:
-                st.dataframe(terminals_df, use_container_width=True)
-            else:
-                st.info("No additional billing counters registered yet.")
-
-    # TAB 7 / LAST: PAYMENT REQUEST & WHATSAPP APPROVAL WORKFLOW
-    target_sub_tab = tab7 if tab7 is not None else tab6
-    if target_sub_tab is not None:
-        with target_sub_tab:
-            st.subheader("💳 Subscription Renewal & Payment Wizard")
-            st.markdown(f"Select your plan below to generate a secure payment QR code. After scanning and paying, enter your UTR to notify Admin on WhatsApp.")
-            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`")
-            
-            if r_payment_status == 'PENDING_APPROVAL':
-                st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
-                
-                wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
-                wa_msg += f"🏥 Store Name: {r_store}\n"
-                wa_msg += f"📦 System Architecture: {r_store_type}\n"
-                wa_msg += f"Please verify payment in bank and approve validity extension."
-                encoded_msg = urllib.parse.quote(wa_msg)
-                wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
-                
-                st.markdown(f"""
-                <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
-                    <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Need to resend details to Admin on WhatsApp?</p>
-                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
-                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
-                            💬 Resend Request on WhatsApp
-                        </button>
-                    </a>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                if "qr_generated" not in st.session_state:
-                    st.session_state.qr_generated = False
-                
-                if not st.session_state.qr_generated:
-                    with st.form("wizard_step1_form"):
-                        if r_store_type == "ENTERPRISE":
-                            plan_choice = st.radio("Select Multi-System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
-                            amt_val = ENT_MONTHLY_FEE if "1 Month" in plan_choice else ENT_YEARLY_FEE
-                            plan_desc = f"Enterprise Multi-System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
-                        else:
-                            plan_choice = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
-                            amt_val = MONTHLY_FEE if "1 Month" in plan_choice else YEARLY_FEE
-                            plan_desc = f"Single System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
-                        
-                        gen_btn = st.form_submit_button("📱 Generate Payment QR Code", type="primary")
-                        if gen_btn:
-                            st.session_state.qr_generated = True
-                            st.session_state.selected_plan_desc = plan_desc
-                            st.session_state.selected_amt = amt_val
-                            st.rerun()
-                else:
-                    st.success(f"✅ Selected Plan: **{st.session_state.selected_plan_desc}**")
-                    st.markdown(f"""
-                    <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
-                        <h3 style="color: #1e293b; margin-top: 0;">📱 Scan Below to Pay ₹{st.session_state.selected_amt}</h3>
-                        <p style="color: #475569; font-size: 14px;">UPI ID: <b>{OWNER_UPI}</b></p>
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi%3A%2F%2Fpay%3Fpa%3D{OWNER_UPI}%26pn%3D{urllib.parse.quote(COMPANY_NAME)}%26am%3D{st.session_state.selected_amt}%26cu%3DINR" alt="UPI QR Code" style="margin: 10px 0; border: 4px solid white; border-radius: 6px;">
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    with st.form("wizard_step2_form"):
-                        utr_code = st.text_input("Enter 12-Digit UPI Transaction ID / UTR Number (After Payment) *", placeholder="e.g. 328471928471")
-                        col_w1, col_w2 = st.columns(2)
-                        with col_w1:
-                            submit_utr = st.form_submit_button("📤 Submit UTR & Share on WhatsApp", type="primary")
-                        with col_w2:
-                            reset_wizard = st.form_submit_button("🔄 Change Plan / QR")
-                            
-                        if reset_wizard:
-                            st.session_state.qr_generated = False
-                            st.rerun()
-                            
-                        if submit_utr:
-                            if not utr_code or len(utr_code.strip()) < 8:
-                                st.error("❌ Please enter a valid 12-digit UTR / Transaction ID after completing payment!")
-                            else:
-                                c = conn.cursor()
-                                c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
-                                conn.commit()
-                                trigger_dual_backup()
-                                
-                                wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
-                                wa_msg += f"🏥 Store Name: {r_store}\n"
-                                wa_msg += f"📦 System Architecture: {r_store_type}\n"
-                                wa_msg += f"💳 Selected Plan: {st.session_state.selected_plan_desc}\n"
-                                wa_msg += f"🔢 UTR / Transaction ID: {utr_code.strip()}\n"
-                                wa_msg += f"Please verify payment in bank and approve validity extension."
-                                
-                                encoded_msg = urllib.parse.quote(wa_msg)
-                                wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
-                                
-                                st.session_state.qr_generated = False
-                                st.success("🎉 Payment request registered successfully!")
-                                st.markdown(f"""
-                                <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
-                                    <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Now click below to send transaction details to Admin on WhatsApp:</p>
-                                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
-                                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
-                                            💬 Share Transaction Details on WhatsApp for Approval
-                                        </button>
-                                    </a>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                st.rerun()
-
-    conn.close()
+                                st.success("Billing
