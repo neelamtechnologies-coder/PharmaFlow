@@ -473,7 +473,8 @@ if st.session_state.role == "SUPER_ADMIN":
             w_pass = st.text_input("Distributor Password", type="password")
             comm = st.number_input("Commission Share (%)", value=10.0)
             
-            if st.form_submit_button("Create Distributor"):
+            submit_dist = st.form_submit_button("Create Distributor")
+            if submit_dist:
                 if c_name and email and w_user and w_pass:
                     try:
                         c = conn.cursor()
@@ -546,4 +547,117 @@ if st.session_state.role == "SUPER_ADMIN":
                     
                     col1, col2 = st.columns(2)
                     with col1:
-                        update_d
+                        update_d = st.form_submit_button("Update Distributor")
+                    with col2:
+                        delete_d = st.form_submit_button("🗑️ Delete Distributor (No Active Retailers)")
+                        
+                    if update_d:
+                        c = conn.cursor()
+                        if ed_pass:
+                            c.execute("UPDATE wholesalers SET company_name = ?, password_hash = ? WHERE id = ?;", (ed_cname, hash_password(ed_pass), sel_d_id))
+                        else:
+                            c.execute("UPDATE wholesalers SET company_name = ? WHERE id = ?;", (ed_cname, sel_d_id))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Distributor updated successfully!")
+                        st.rerun()
+                        
+                    if delete_d:
+                        c = conn.cursor()
+                        c.execute("SELECT COUNT(*) FROM retailers WHERE wholesaler_id = ?;", (sel_d_id,))
+                        retailer_count = c.fetchone()[0]
+                        
+                        if retailer_count == 0:
+                            c.execute("DELETE FROM wholesalers WHERE id = ?;", (sel_d_id,))
+                            conn.commit()
+                            trigger_dual_backup()
+                            st.success("Distributor successfully deleted as no active retailers are assigned!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Deletion Blocked! This distributor has {retailer_count} active retailer(s) linked to their network. You cannot delete a distributor until all linked retailers are removed.")
+            else:
+                st.info("No distributors available to edit.")
+        else:
+            ret_list = pd.read_sql_query("SELECT id, store_name, username, subscription_status, payment_status, plan_expiry_date FROM retailers ORDER BY store_name ASC;", conn)
+            if not ret_list.empty:
+                r_opts = {f"{row['store_name']} (Status: {row['subscription_status']}, Payment: {row['payment_status']})": row['id'] for _, row in ret_list.iterrows()}
+                sel_r_str = st.selectbox("Select Retailer to Edit or Conditionally Delete", list(r_opts.keys()))
+                sel_r_id = r_opts[sel_r_str]
+                
+                curr_r = ret_list[ret_list['id'] == sel_r_id].iloc[0]
+                
+                with st.form("edit_ret_form"):
+                    ed_sname = st.text_input("Store Name", value=curr_r['store_name'])
+                    ed_rpass = st.text_input("New Password (leave blank to keep current)", type="password")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        update_r = st.form_submit_button("Update Retailer Details")
+                    with col2:
+                        delete_r = st.form_submit_button("🗑️ Delete Retailer (Trial/Pending/Expired Only)")
+                        
+                    if update_r:
+                        c = conn.cursor()
+                        if ed_rpass:
+                            c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ?;", (ed_sname, hash_password(ed_rpass), sel_r_id))
+                        else:
+                            c.execute("UPDATE retailers SET store_name = ? WHERE id = ?;", (ed_sname, sel_r_id))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Retailer updated successfully!")
+                        st.rerun()
+                        
+                    if delete_r:
+                        expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date']), '%Y-%m-%d %H:%M:%S') if curr_r['plan_expiry_date'] else datetime.now()
+                        is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
+                        is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
+                        is_expired = expiry_dt < datetime.now()
+                        
+                        if is_trial or is_pending or is_expired:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
+                            conn.commit()
+                            trigger_dual_backup()
+                            st.success("Retailer successfully deleted!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription. You can only delete retailers whose plan is in Trial, Pending, or has Expired.")
+            else:
+                st.info("No retailers available to edit.")
+
+    with tab5:
+        st.markdown("### Variable Subscription Pricing & Master Override")
+        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
+        
+        retailers_list = pd.read_sql_query("SELECT id, store_name, store_type FROM retailers ORDER BY store_name ASC;", conn)
+        if not retailers_list.empty:
+            r_opts = {f"{row['store_name']} ({row['store_type']})": row['id'] for _, row in retailers_list.iterrows()}
+            sel_r = st.selectbox("Select Retailer for Plan Override", list(r_opts.keys()))
+            r_id = r_opts[sel_r]
+            
+            curr_type = pd.read_sql_query("SELECT store_type FROM retailers WHERE id = ?;", conn, params=(r_id,)).iloc[0]["store_type"]
+            
+            if curr_type == "ENTERPRISE":
+                period = st.radio("Select Multi System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+            else:
+                period = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+            
+            if st.button("⚡ Verify & Extend Plan", type="primary"):
+                c = conn.cursor()
+                if "1 Month" in period:
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                else:
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
+                conn.commit()
+                trigger_dual_backup()
+                st.success("Plan extended successfully!")
+                st.rerun()
+        else:
+            st.info("Please register a retailer before processing.")
+
+    with tab6:
+        st.markdown("### ⚙️ White-Label & Variable Market Pricing Setup")
+        with st.form("settings_form"):
+            new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
+            new_user = st.text_input("Admin Username", value=ADMIN_USER)
+            new_pwd = st.
