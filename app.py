@@ -807,4 +807,104 @@ elif st.session_state.role == "RETAILER":
 
         st.markdown("---")
 
-        df_active = pd.read_sql_query("SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, MAX(expiry_date) as expiry_date,
+        df_active = pd.read_sql_query("SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h FROM inventory WHERE retailer_id = ? AND quantity > 0 GROUP BY name, batch ORDER BY name ASC, expiry_date ASC;", conn, params=(st.session_state.user_id,))
+
+        if not df_active.empty:
+            st.markdown("#### Search Medicine (Sorted A-Z & Near Expiry First)")
+            
+            options = {}
+            for _, row in df_active.iterrows():
+                rx_tag = "[Rx] " if row['is_schedule_h'] == 1 else ""
+                display_str = f"{rx_tag}{row['name']} | Batch: {row['batch']} | Exp: {row['expiry_date']} | MRP: ₹{row['price']} | Stock: {row['quantity']}"
+                options[display_str] = row['batch']
+                
+            selected_display = st.selectbox("Select Medicine", list(options.keys()))
+            selected_batch = options[selected_display]
+            med_details = df_active[df_active['batch'] == selected_batch].iloc[0]
+            
+            c_info, c_qty, c_disc, c_btn = st.columns([2, 1, 1, 1])
+            with c_info:
+                rx_label = "🔴 [Schedule H / Rx]" if med_details['is_schedule_h'] == 1 else "🟢 [OTC]"
+                st.info(f"**Item:** {med_details['name']} {rx_label} | **GST:** {med_details['gst_percent']}% | **Exp:** {med_details['expiry_date']}")
+            with c_qty:
+                sell_qty = st.number_input("Qty", min_value=1, max_value=int(med_details['quantity']), value=1)
+            with c_disc:
+                item_disc = st.number_input("Discount %", min_value=0.0, max_value=100.0, value=float(med_details['discount_percent']))
+            with c_btn:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("➕ Add to Bill", type="primary"):
+                    unit_price = float(med_details['price'])
+                    disc_amount_unit = unit_price * (item_disc / 100.0)
+                    discounted_price = unit_price - disc_amount_unit
+                    total_amt = sell_qty * discounted_price
+                    st.session_state.cart.append({
+                        "batch": selected_batch, 
+                        "name": med_details['name'], 
+                        "mrp": unit_price, 
+                        "discount_percent": item_disc,
+                        "discount_rs": disc_amount_unit,
+                        "qty": sell_qty, 
+                        "is_schedule_h": int(med_details['is_schedule_h']),
+                        "net_total": total_amt
+                    })
+                    st.success("Added!")
+                    st.rerun()
+            
+            if st.session_state.cart:
+                st.markdown("### 🧾 Current Bill Items")
+                
+                for idx, cart_item in enumerate(st.session_state.cart):
+                    col_i1, col_i2, col_i3, col_i4, col_i5, col_i6 = st.columns([2.5, 1, 1, 1, 1, 1])
+                    with col_i1:
+                        rx_badge = "🔴 [Rx]" if cart_item.get('is_schedule_h', 0) == 1 else ""
+                        st.write(f"{rx_badge} **{cart_item['name']}**")
+                    with col_i2:
+                        st.write(f"MRP: ₹{cart_item['mrp']}")
+                    with col_i3:
+                        st.write(f"Disc: {cart_item['discount_percent']}% (₹{cart_item['discount_rs']:.2f})")
+                    with col_i4:
+                        st.write(f"Qty: {cart_item['qty']}")
+                    with col_i5:
+                        st.write(f"**₹{cart_item['net_total']:.2f}**")
+                    with col_i6:
+                        if st.button("❌ Remove", key=f"remove_item_{idx}"):
+                            st.session_state.cart.pop(idx)
+                            st.rerun()
+
+                grand_total = sum(item['net_total'] for item in st.session_state.cart)
+                total_savings = sum(item['discount_rs'] * item['qty'] for item in st.session_state.cart)
+                
+                st.markdown(f"### Grand Total: ₹ {grand_total:.2f} *(Total Savings: ₹ {total_savings:.2f})*")
+                
+                missing_doctor = (cart_has_schedule_h and (not raw_doc or not raw_doc.strip()))
+                
+                if missing_doctor:
+                    st.error("🚨 **Mandatory Requirement:** Cart contains Schedule H (Rx) medicine(s). You MUST enter the Doctor's name before bill generation is allowed!")
+                
+                if st.button("🖨️ Complete Sale & Print Bill", type="primary", disabled=missing_doctor):
+                    invoice_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    c.execute("INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, invoice_no, cust_name, f"{cust_phone} | Ref: {ref_type} ({doctor_ref})", grand_total))
+                    
+                    for item in st.session_state.cart:
+                        c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
+                    conn.commit()
+                    trigger_dual_backup()
+                    
+                    wa_text = f"*{r_store} - Tax Invoice*\nInv No: {invoice_no}\nDate: {datetime.now().strftime('%d-%m-%Y %H:%M')}\nCustomer: {cust_name}\nRef: {ref_type} ({doctor_ref})\n-------------------\n"
+                    for itm in st.session_state.cart:
+                        wa_text += f"• {itm['name']} x {itm['qty']} = ₹{itm['net_total']:.2f} (Saved ₹{itm['discount_rs']*itm['qty']:.2f})\n"
+                    wa_text += f"-------------------\n*Grand Total: ₹{grand_total:.2f}*\n*(Total Savings: ₹{total_savings:.2f})*\nThank You! — Powered by {COMPANY_NAME}"
+                    
+                    encoded_wa_text = urllib.parse.quote(wa_text)
+                    clean_phone = "".join(filter(str.isdigit, cust_phone))
+                    wa_url = f"https://wa.me/91{clean_phone}?text={encoded_wa_text}" if len(clean_phone) >= 10 else "https://web.whatsapp.com"
+
+                    st.session_state.last_invoice = {
+                        "invoice_no": invoice_no,
+                        "store_name": r_store,
+                        "customer_name": cust_name,
+                        "customer_phone": cust_phone,
+                        "reference": f"{ref_type} - {doctor_ref}",
+                        "items": list(st.session_state.cart),
+                        "grand_total": grand_total,
+                        "total_savings": total_savings,
