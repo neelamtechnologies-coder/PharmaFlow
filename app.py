@@ -908,3 +908,175 @@ elif st.session_state.role == "RETAILER":
                         "items": list(st.session_state.cart),
                         "grand_total": grand_total,
                         "total_savings": total_savings,
+                        "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "wa_text": wa_text,
+                        "wa_url": wa_url
+                    }
+                    st.session_state.cart = []
+                    st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
+                    st.balloons()
+            
+            if st.session_state.last_invoice:
+                inv = st.session_state.last_invoice
+                st.markdown("---")
+                st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
+                
+                if inv['customer_phone'] and len(inv['customer_phone'].strip()) >= 10:
+                    st.markdown(f"""
+                    <div style="margin-bottom: 15px;">
+                        <a href="{inv['wa_url']}" target="_blank" style="text-decoration: none;">
+                            <button style="background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
+                                💬 Open WhatsApp Chat with ({inv['customer_phone']})
+                            </button>
+                        </a>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("💡 Enter a 10-digit customer phone number to enable direct WhatsApp chat opening.")
+
+                st.markdown("📋 **Or copy bill text manually:**")
+                st.text_area("WhatsApp Bill Text", value=inv['wa_text'], height=150, key="wa_textbox_manual")
+
+                bill_html = f"""
+                <div id="printable-bill" style="background-color: #ffffff; color: #000000; padding: 25px; border-radius: 8px; font-family: monospace; max-width: 450px; margin: auto; border: 1px solid #ccc;">
+                    <h2 style="text-align: center; margin: 0;">🏥 {inv['store_name']}</h2>
+                    <p style="text-align: center; font-size: 12px; color: #555; margin: 3px 0;">GST Retail Invoice / Cash Memo</p>
+                    <p style="text-align: center; font-size: 11px; color: #333; margin: 2px 0;"><b>GSTIN:</b> 23AABCT9988K1ZU</p>
+                    <hr style="border-color: #000;">
+                    <p style="margin: 4px 0;"><b>Invoice No:</b> {inv['invoice_no']}</p>
+                    <p style="margin: 4px 0;"><b>Date:</b> {inv['date']}</p>
+                    <p style="margin: 4px 0;"><b>Customer:</b> {inv['customer_name']} ({inv['customer_phone']})</p>
+                    <p style="margin: 4px 0;"><b>Reference:</b> {inv['reference']}</p>
+                    <hr style="border-color: #000;">
+                    <table style="width: 100%; font-size: 12px; text-align: left; border-collapse: collapse;">
+                        <tr style="border-bottom: 1px solid #000;"><th>Item</th><th>Qty</th><th>MRP</th><th>Disc (₹)</th><th>Total</th></tr>
+                """
+                for itm in inv['items']:
+                    item_disc_rs = itm['discount_rs'] * itm['qty']
+                    bill_html += f"""
+                        <tr style="border-bottom: 1px dashed #ddd;">
+                            <td style="padding: 4px 0;">{itm['name']}</td>
+                            <td>{itm['qty']}</td>
+                            <td>₹{itm['mrp']}</td>
+                            <td>₹{item_disc_rs:.2f} ({itm['discount_percent']}%)</td>
+                            <td><b>₹{itm['net_total']:.2f}</b></td>
+                        </tr>
+                    """
+                bill_html += f"""
+                    </table>
+                    <hr style="border-color: #000;">
+                    <h3 style="text-align: right; margin: 5px 0;">Grand Total: ₹{inv['grand_total']:.2f}</h3>
+                    <p style="text-align: right; font-size: 11px; color: #008000; margin: 0;">Total Customer Savings: ₹{inv['total_savings']:.2f}</p>
+                    <br>
+                    <p style="text-align: center; font-size: 11px; color: #333; margin: 10px 0 2px 0;">Thank You! Get Well Soon.</p>
+                    <p style="text-align: center; font-size: 10px; color: #000; font-weight: bold; margin: 0;">Powered by {COMPANY_NAME}</p>
+                </div>
+                <script>
+                    function printBill() {{
+                        var printContents = document.getElementById('printable-bill').innerHTML;
+                        var originalContents = document.body.innerHTML;
+                        document.body.innerHTML = printContents;
+                        window.print();
+                        document.body.innerHTML = originalContents;
+                        window.location.reload();
+                    }}
+                </script>
+                <div style="text-align: center; margin-top: 15px;">
+                    <button onclick="printBill()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
+                        🖨️ Select Printer & Print Thermal Slip
+                    </button>
+                </div>
+                """
+                components.html(bill_html, height=520)
+                
+                if st.button("✖️ Close / Clear Preview"):
+                    st.session_state.last_invoice = None
+                    st.rerun()
+        else:
+            st.info("No active stock available in inventory.")
+
+    with tab3:
+        st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
+        df_inv = pd.read_sql_query("SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h FROM inventory WHERE retailer_id = ? GROUP BY name, batch ORDER BY name ASC, expiry_date ASC;", conn, params=(st.session_state.user_id,))
+        if not df_inv.empty:
+            df_inv.index = range(1, len(df_inv) + 1)
+            low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
+            if not low_stock_df.empty:
+                st.error(f"🚨 **Low Stock Alert:** Found {len(low_stock_df)} medicine(s) running low on stock!")
+                st.dataframe(low_stock_df[['name', 'batch', 'quantity', 'min_stock', 'expiry_date', 'price']], use_container_width=True)
+                st.markdown("---")
+
+            st.markdown("### 📋 Complete Inventory Catalog")
+            edited_inv_df = st.data_editor(df_inv, use_container_width=True, key="inventory_editor", column_config={"id": None})
+            
+            if st.button("💾 Save Database Changes", type="primary"):
+                try:
+                    for _, row in edited_inv_df.iterrows():
+                        c.execute("UPDATE inventory SET name = ?, batch = ?, quantity = ?, min_stock = ?, price = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ?, expiry_date = ? WHERE id = ? AND retailer_id = ?;", (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Inventory updated successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error saving changes: {e}")
+        else:
+            st.info("No inventory items found.")
+
+    with tab4:
+        st.subheader("📦 30-Day & 90-Day Expiry Return Reminders")
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        limit_30 = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+        limit_90 = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+        
+        exp_filter = st.radio("Select Expiry Window", ["⚠️ 30-Day Critical Expiry Return", "📦 90-Day Extended Expiry Return"], horizontal=True)
+        
+        if "30-Day" in exp_filter:
+            df_exp30 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND expiry_date >= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_30, today_str))
+            if not df_exp30.empty:
+                df_exp30.index = range(1, len(df_exp30) + 1)
+                st.dataframe(df_exp30, use_container_width=True)
+                st.warning("⚠️ Critical: Return these items immediately.")
+            else:
+                st.success("🎉 No items expiring in the next 30 days!")
+        else:
+            df_exp90 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_90))
+            if not df_exp90.empty:
+                df_exp90.index = range(1, len(df_exp90) + 1)
+                st.dataframe(df_exp90, use_container_width=True)
+                st.warning("⚠️ Near expiry items identified.")
+            else:
+                st.success("No near-expiry items found.")
+
+    with tab5:
+        st.subheader("📥 Bulk Import Inventory via Excel / CSV")
+        uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
+        if uploaded_csv is not None:
+            st.success("File uploaded successfully!")
+
+    if tab7 is not None:
+        with tab6:
+            st.subheader("💻 Multi-System Terminal Management (Server / Client Counters)")
+            t_sub_tab1, t_sub_tab2 = st.tabs(["➕ Add New Counter", "🔑 Update Counter Password / Remove"])
+            
+            with t_sub_tab1:
+                with st.form("add_terminal_form"):
+                    t_name = st.text_input("Counter / Terminal Name")
+                    t_user = st.text_input("Terminal Login Username")
+                    t_pass = st.text_input("Terminal Password", type="password")
+                    
+                    submit_term = st.form_submit_button("Create Billing Counter Terminal")
+                    if submit_term:
+                        if t_name and t_user and t_pass:
+                            try:
+                                c.execute("INSERT INTO store_terminals (retailer_id, terminal_name, terminal_type, username, password_hash) VALUES (?, ?, 'CLIENT', ?, ?);", (st.session_state.user_id, t_name, t_user.strip(), hash_password(t_pass)))
+                                conn.commit()
+                                trigger_dual_backup()
+                                st.success(f"Billing Counter '{t_name}' successfully created!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error creating terminal: {e}")
+                        else:
+                            st.warning("Please fill in all required fields.")
+            
+            with t_sub_tab2:
+                terminals_list_
