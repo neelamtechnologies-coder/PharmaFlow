@@ -63,7 +63,7 @@ def init_db():
             enterprise_yearly_fee REAL DEFAULT 9999.0,
             client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket',
             gemini_api_key TEXT DEFAULT '',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );
     ''')
     conn.commit()
@@ -104,7 +104,7 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             commission_rate REAL DEFAULT 10.0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );
     ''')
 
@@ -120,9 +120,9 @@ def init_db():
             password_hash TEXT NOT NULL,
             store_type TEXT DEFAULT 'SINGLE',
             subscription_status TEXT DEFAULT 'TRIAL',
-            plan_expiry_date TIMESTAMP DEFAULT (datetime('now', '+7 days')),
+            plan_expiry_date TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes', '+7 days')),
             payment_status TEXT DEFAULT 'PENDING',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
             FOREIGN KEY(wholesaler_id) REFERENCES wholesalers(id) ON DELETE SET NULL
         );
     ''')
@@ -141,7 +141,7 @@ def init_db():
             terminal_type TEXT DEFAULT 'CLIENT',
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
             FOREIGN KEY(retailer_id) REFERENCES retailers(id) ON DELETE CASCADE
         );
     ''')
@@ -171,7 +171,7 @@ def init_db():
             customer_name TEXT,
             customer_phone TEXT,
             total_amount REAL NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
             FOREIGN KEY(retailer_id) REFERENCES retailers(id) ON DELETE CASCADE
         );
     ''')
@@ -189,7 +189,7 @@ def init_db():
     if c.fetchone()[0] == 0:
         c.execute("""
             INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date)
-            VALUES (1, 'Test1 Medical Store', 'Manoj Kumar', 'retailer@neelamtech.in', '9876543210', 'SINGLE', 'teststore', ?, 'ACTIVE', 'ACTIVE', datetime('now', '+30 days'));
+            VALUES (1, 'Test1 Medical Store', 'Manoj Kumar', 'retailer@neelamtech.in', '9876543210', 'SINGLE', 'teststore', ?, 'ACTIVE', 'ACTIVE', datetime('now', '+5 hours', '+30 minutes', '+30 days'));
         """, (hash_password("store123"),))
         conn.commit()
 
@@ -487,7 +487,7 @@ elif st.session_state.role == "WHOLESALER":
                         store_category = "ENTERPRISE" if "ENTERPRISE" in s_type else "SINGLE"
                         c.execute("""
                             INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+7 days'), CURRENT_TIMESTAMP)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+5 hours', '+30 minutes', '+7 days'), datetime('now', '+5 hours', '+30 minutes'))
                         """, (st.session_state.user_id, s_name, o_name, email, phone.strip(), store_category, r_user, hash_password(r_pass)))
                         conn.commit()
                         trigger_dual_backup()
@@ -1018,386 +1018,4 @@ elif st.session_state.role == "RETAILER":
                         "net_total": total_amt
                     })
                     st.success("Added!")
-                    st.rerun()
-            
-            if st.session_state.cart:
-                st.markdown("### 🧾 Current Bill Items")
-                
-                for idx, cart_item in enumerate(st.session_state.cart):
-                    col_i1, col_i2, col_i3, col_i4, col_i5, col_i6 = st.columns([2.5, 1, 1, 1, 1, 1])
-                    with col_i1:
-                        rx_badge = "🔴 [Rx]" if cart_item.get('is_schedule_h', 0) == 1 else ""
-                        st.write(f"{rx_badge} **{cart_item['name']}**")
-                    with col_i2:
-                        st.write(f"MRP: ₹{cart_item['mrp']}")
-                    with col_i3:
-                        st.write(f"Disc: {cart_item['discount_percent']}% (₹{cart_item['discount_rs']:.2f})")
-                    with col_i4:
-                        st.write(f"Qty: {cart_item['qty']}")
-                    with col_i5:
-                        st.write(f"**₹{cart_item['net_total']:.2f}**")
-                    with col_i6:
-                        if st.button("❌ Remove", key=f"remove_item_{idx}"):
-                            st.session_state.cart.pop(idx)
-                            st.rerun()
-
-                grand_total = sum(item['net_total'] for item in st.session_state.cart)
-                total_savings = sum(item['discount_rs'] * item['qty'] for item in st.session_state.cart)
-                
-                st.markdown(f"### Grand Total: ₹ {grand_total:.2f} *(Total Savings: ₹ {total_savings:.2f})*")
-                
-                missing_doctor = (cart_has_schedule_h and (not raw_doc or not raw_doc.strip()))
-                
-                if missing_doctor:
-                    st.error("🚨 **Mandatory Requirement:** Cart contains Schedule H (Rx) medicine(s). You MUST enter the Doctor's name before bill generation is allowed!")
-                
-                if st.button("🖨️ Complete Sale & Print Bill", type="primary", disabled=missing_doctor):
-                    invoice_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    c.execute("""
-                        INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) 
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (st.session_state.user_id, invoice_no, cust_name, f"{cust_phone} | Ref: {ref_type} ({doctor_ref})", grand_total))
-                    
-                    for item in st.session_state.cart:
-                        c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
-                    conn.commit()
-                    trigger_dual_backup()
-                    
-                    wa_text = f"*{r_store} - Tax Invoice*\n"
-                    wa_text += f"Inv No: {invoice_no}\n"
-                    wa_text += f"Date: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n"
-                    wa_text += f"Customer: {cust_name}\n"
-                    wa_text += f"Ref: {ref_type} ({doctor_ref})\n"
-                    wa_text += "-------------------\n"
-                    for itm in st.session_state.cart:
-                        wa_text += f"• {itm['name']} x {itm['qty']} = ₹{itm['net_total']:.2f}\n"
-                    wa_text += "-------------------\n"
-                    wa_text += f"*Grand Total: ₹{grand_total:.2f}*\n"
-                    wa_text += f"*(You Saved: ₹{total_savings:.2f})*\n"
-                    wa_text += f"Thank You for shopping with us! — Powered by {COMPANY_NAME}"
-                    
-                    encoded_wa_text = urllib.parse.quote(wa_text)
-                    clean_phone = "".join(filter(str.isdigit, cust_phone))
-                    wa_url = f"https://wa.me/91{clean_phone}?text={encoded_wa_text}" if len(clean_phone) >= 10 else "https://web.whatsapp.com"
-
-                    st.session_state.last_invoice = {
-                        "invoice_no": invoice_no,
-                        "store_name": r_store,
-                        "customer_name": cust_name,
-                        "customer_phone": cust_phone,
-                        "reference": f"{ref_type} - {doctor_ref}",
-                        "items": list(st.session_state.cart),
-                        "grand_total": grand_total,
-                        "total_savings": total_savings,
-                        "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        "wa_text": wa_text,
-                        "wa_url": wa_url
-                    }
-                    st.session_state.cart = []
-                    st.success(f"Sale completed successfully! Invoice Number: {invoice_no}")
-                    st.balloons()
-            
-            if st.session_state.last_invoice:
-                inv = st.session_state.last_invoice
-                st.markdown("---")
-                st.markdown("### 🖨️ Thermal Bill Print Preview & WhatsApp Dispatch")
-                
-                if inv['customer_phone'] and len(inv['customer_phone'].strip()) >= 10:
-                    st.markdown(f"""
-                    <div style="margin-bottom: 15px;">
-                        <a href="{inv['wa_url']}" target="_blank" style="text-decoration: none;">
-                            <button style="background-color:#25D366; color:white; padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
-                                💬 Open WhatsApp Chat with ({inv['customer_phone']})
-                            </button>
-                        </a>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.info("💡 Enter a 10-digit customer phone number to enable direct WhatsApp chat opening.")
-
-                st.markdown("📋 **Or copy bill text manually:**")
-                st.text_area("WhatsApp Bill Text", value=inv['wa_text'], height=150, key="wa_textbox_manual")
-
-                bill_html = f"""
-                <div id="printable-bill" style="background-color: #ffffff; color: #000000; padding: 25px; border-radius: 8px; font-family: monospace; max-width: 450px; margin: auto; border: 1px solid #ccc;">
-                    <h2 style="text-align: center; margin: 0;">🏥 {inv['store_name']}</h2>
-                    <p style="text-align: center; font-size: 12px; color: #555; margin: 3px 0;">GST Retail Invoice / Cash Memo</p>
-                    <hr style="border-color: #000;">
-                    <p style="margin: 4px 0;"><b>Invoice No:</b> {inv['invoice_no']}</p>
-                    <p style="margin: 4px 0;"><b>Date:</b> {inv['date']}</p>
-                    <p style="margin: 4px 0;"><b>Customer:</b> {inv['customer_name']} ({inv['customer_phone']})</p>
-                    <p style="margin: 4px 0;"><b>Reference:</b> {inv['reference']}</p>
-                    <hr style="border-color: #000;">
-                    <table style="width: 100%; font-size: 12px; text-align: left; border-collapse: collapse;">
-                        <tr style="border-bottom: 1px solid #000;"><th>Item</th><th>Qty</th><th>MRP</th><th>Disc</th><th>Total</th></tr>
-                """
-                for itm in inv['items']:
-                    bill_html += f"""
-                        <tr style="border-bottom: 1px dashed #ddd;">
-                            <td style="padding: 4px 0;">{itm['name']}</td>
-                            <td>{itm['qty']}</td>
-                            <td>₹{itm['mrp']}</td>
-                            <td>{itm['discount_percent']}%</td>
-                            <td><b>₹{itm['net_total']:.2f}</b></td>
-                        </tr>
-                    """
-                bill_html += f"""
-                    </table>
-                    <hr style="border-color: #000;">
-                    <h3 style="text-align: right; margin: 5px 0;">Grand Total: ₹{inv['grand_total']:.2f}</h3>
-                    <p style="text-align: right; font-size: 11px; color: #008000; margin: 0;">You Saved: ₹{inv['total_savings']:.2f}</p>
-                    <br>
-                    <p style="text-align: center; font-size: 11px; color: #333; margin: 10px 0 2px 0;">Thank You! Get Well Soon.</p>
-                    <p style="text-align: center; font-size: 10px; color: #000; font-weight: bold; margin: 0;">Powered by {COMPANY_NAME}</p>
-                </div>
-                <script>
-                    function printBill() {{
-                        var printContents = document.getElementById('printable-bill').innerHTML;
-                        var originalContents = document.body.innerHTML;
-                        document.body.innerHTML = printContents;
-                        window.print();
-                        document.body.innerHTML = originalContents;
-                        window.location.reload();
-                    }}
-                </script>
-                <div style="text-align: center; margin-top: 15px;">
-                    <button onclick="printBill()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
-                        🖨️ Select Printer & Print Thermal Slip
-                    </button>
-                </div>
-                """
-                components.html(bill_html, height=520)
-                
-                if st.button("✖️ Close / Clear Preview"):
-                    st.session_state.last_invoice = None
-                    st.rerun()
-        else:
-            st.info("No active stock available in inventory.")
-
-    # TAB 3: DASHBOARD
-    if tab3 is not None:
-        with tab3:
-            st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
-            
-            df_inv = pd.read_sql_query("""
-                SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
-                       MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
-                       MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h 
-                FROM inventory 
-                WHERE retailer_id = ? 
-                GROUP BY name, batch 
-                ORDER BY name ASC, expiry_date ASC;
-            """, conn, params=(st.session_state.user_id,))
-            
-            if not df_inv.empty:
-                df_inv.index = range(1, len(df_inv) + 1)
-
-                low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
-                
-                if not low_stock_df.empty:
-                    st.error(f"🚨 **Low Stock Alert:** Found {len(low_stock_df)} medicine(s) running low on stock! Please check below.")
-                    st.dataframe(low_stock_df[['name', 'batch', 'quantity', 'min_stock', 'expiry_date', 'price']], use_container_width=True)
-                    st.markdown("---")
-
-                st.markdown("### 📋 Complete Inventory Catalog")
-                st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'.*")
-                
-                def highlight_low_stock(row):
-                    if row['quantity'] <= row['min_stock']:
-                        return ['background-color: #ffe6e6; color: #900'] * len(row)
-                    return [''] * len(row)
-
-                styled_df = df_inv.style.apply(highlight_low_stock, axis=1)
-
-                edited_inv_df = st.data_editor(
-                    styled_df, 
-                    use_container_width=True, 
-                    key="inventory_editor",
-                    column_config={"id": None}
-                )
-                
-                if st.button("💾 Save Database Changes", type="primary"):
-                    try:
-                        for _, row in edited_inv_df.iterrows():
-                            c.execute("""
-                                UPDATE inventory 
-                                SET name = ?, batch = ?, quantity = ?, min_stock = ?, price = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ?, expiry_date = ?
-                                WHERE id = ? AND retailer_id = ?;
-                            """, (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success("Inventory updated successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error saving changes: {e}")
-            else:
-                st.info("No inventory items found.")
-
-    # TAB 4: NEAR EXPIRY
-    if tab4 is not None:
-        with tab4:
-            st.subheader("📦 30-Day & 90-Day Expiry Return Reminders")
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            limit_30 = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
-            limit_90 = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
-            
-            exp_filter = st.radio("Select Expiry Window", ["⚠️ 30-Day Critical Expiry Return", "📦 90-Day Extended Expiry Return"], horizontal=True)
-            
-            if "30-Day" in exp_filter:
-                st.markdown("#### 🚨 Medicines Expiring Within the Next 30 Days (Immediate Return)")
-                df_exp30 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND expiry_date >= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_30, today_str))
-                if not df_exp30.empty:
-                    df_exp30.index = range(1, len(df_exp30) + 1)
-                    st.dataframe(df_exp30, use_container_width=True)
-                    st.warning("⚠️ Critical: These items must be returned to the distributor immediately to prevent financial loss.")
-                else:
-                    st.success("🎉 No items expiring in the next 30 days!")
-            else:
-                st.markdown("#### 📦 Medicines Expiring Within the Next 90 Days")
-                df_exp90 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_90))
-                if not df_exp90.empty:
-                    df_exp90.index = range(1, len(df_exp90) + 1)
-                    st.dataframe(df_exp90, use_container_width=True)
-                    st.warning("⚠️ Near expiry items identified for distributor return.")
-                else:
-                    st.success("No near-expiry items found.")
-
-    # TAB 5: EXCEL IMPORT
-    if tab5 is not None:
-        with tab5:
-            st.subheader("📥 Bulk Import Inventory via Excel / CSV")
-            uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
-            if uploaded_csv is not None:
-                st.success("File uploaded successfully!")
-
-    # TAB 6: MULTI SYSTEM TERMINAL MANAGEMENT & PASSWORD UPDATES
-    if tab7 is not None:
-        with tab6:
-            st.subheader("💻 Multi-System Terminal Management (Server / Client Counters)")
-            st.markdown("Add separate login credentials for additional billing counters (Client Terminals) or update existing terminal passwords.")
-            
-            t_sub_tab1, t_sub_tab2 = st.tabs(["➕ Add New Counter", "🔑 Update Counter Password / Remove"])
-            
-            with t_sub_tab1:
-                with st.form("add_terminal_form"):
-                    t_name = st.text_input("Counter / Terminal Name (e.g. Counter 2, Ground Floor POS)")
-                    t_user = st.text_input("Terminal Login Username")
-                    t_pass = st.text_input("Terminal Password", type="password")
-                    
-                    submit_term = st.form_submit_button("Create Billing Counter Terminal")
-                    if submit_term:
-                        if t_name and t_user and t_pass:
-                            try:
-                                c.execute("""
-                                    INSERT INTO store_terminals (retailer_id, terminal_name, terminal_type, username, password_hash)
-                                    VALUES (?, ?, 'CLIENT', ?, ?)
-                                """, (st.session_state.user_id, t_name, t_user.strip(), hash_password(t_pass)))
-                                conn.commit()
-                                trigger_dual_backup()
-                                st.success(f"Billing Counter '{t_name}' successfully created!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error creating terminal: {e}")
-                        else:
-                            st.warning("Please fill in all required fields.")
-            
-            with t_sub_tab2:
-                terminals_list_df = pd.read_sql_query("SELECT id, terminal_name, username FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-                if not terminals_list_df.empty:
-                    t_opts = {f"{row['terminal_name']} (User: {row['username']})": row['id'] for _, row in terminals_list_df.iterrows()}
-                    sel_term_str = st.selectbox("Select Counter to Update Password or Delete", list(t_opts.keys()))
-                    sel_term_id = t_opts[sel_term_str]
-                    
-                    with st.form("update_term_pass_form"):
-                        new_t_pass = st.text_input("Enter New Password for Counter", type="password")
-                        col_tp1, col_tp2 = st.columns(2)
-                        with col_tp1:
-                            update_t_btn = st.form_submit_button("🔑 Update Counter Password", type="primary")
-                        with col_tp2:
-                            delete_t_btn = st.form_submit_button("🗑️ Delete Counter Terminal")
-                            
-                        if update_t_btn:
-                            if not new_t_pass or len(new_t_pass.strip()) < 4:
-                                st.error("Please enter a valid new password!")
-                            else:
-                                c.execute("UPDATE store_terminals SET password_hash = ? WHERE id = ? AND retailer_id = ?;", (hash_password(new_t_pass), sel_term_id, st.session_state.user_id))
-                                conn.commit()
-                                trigger_dual_backup()
-                                st.success("Billing counter password successfully updated! The employee will now need the new password to login.")
-                                st.rerun()
-                                
-                        if delete_t_btn:
-                            c.execute("DELETE FROM store_terminals WHERE id = ? AND retailer_id = ?;", (sel_term_id, st.session_state.user_id))
-                            conn.commit()
-                            trigger_dual_backup()
-                            st.success("Billing counter terminal successfully deleted!")
-                            st.rerun()
-                else:
-                    st.info("No billing counters available to modify.")
-            
-            st.markdown("---")
-            st.markdown("### Existing Billing Counters")
-            terminals_df = pd.read_sql_query("SELECT id, terminal_name, username, created_at FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-            if not terminals_df.empty:
-                st.dataframe(terminals_df, use_container_width=True)
-            else:
-                st.info("No additional billing counters registered yet.")
-
-    # TAB 7 / LAST: PAYMENT REQUEST & WHATSAPP APPROVAL WORKFLOW
-    target_sub_tab = tab7 if tab7 is not None else tab6
-    if target_sub_tab is not None:
-        with target_sub_tab:
-            st.subheader("💳 Subscription Renewal & Payment Wizard")
-            st.markdown(f"Select your plan below to generate a secure payment QR code. After scanning and paying, enter your UTR to notify Admin on WhatsApp.")
-            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`")
-            
-            if r_payment_status == 'PENDING_APPROVAL':
-                st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
-                
-                wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
-                wa_msg += f"🏥 Store Name: {r_store}\n"
-                wa_msg += f"📦 System Architecture: {r_store_type}\n"
-                wa_msg += f"Please verify payment in bank and approve validity extension."
-                encoded_msg = urllib.parse.quote(wa_msg)
-                wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
-                
-                st.markdown(f"""
-                <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
-                    <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Need to resend details to Admin on WhatsApp?</p>
-                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
-                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
-                            💬 Resend Request on WhatsApp
-                        </button>
-                    </a>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                if "qr_generated" not in st.session_state:
-                    st.session_state.qr_generated = False
-                
-                if not st.session_state.qr_generated:
-                    with st.form("wizard_step1_form"):
-                        if r_store_type == "ENTERPRISE":
-                            plan_choice = st.radio("Select Multi-System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
-                            amt_val = ENT_MONTHLY_FEE if "1 Month" in plan_choice else ENT_YEARLY_FEE
-                            plan_desc = f"Enterprise Multi-System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
-                        else:
-                            plan_choice = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
-                            amt_val = MONTHLY_FEE if "1 Month" in plan_choice else YEARLY_FEE
-                            plan_desc = f"Single System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
-                        
-                        gen_btn = st.form_submit_button("📱 Generate Payment QR Code", type="primary")
-                        if gen_btn:
-                            st.session_state.qr_generated = True
-                            st.session_state.selected_plan_desc = plan_desc
-                            st.session_state.selected_amt = amt_val
-                            st.rerun()
-                else:
-                    st.success(f"✅ Selected Plan: **{st.session_state.selected_plan_desc}**")
-                    st.markdown(f"""
-                    <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
-                        <h3 style="color: #1e293b; margin-top: 0;">📱 Scan Below to Pay ₹{st.session_state.selected_amt}</h3>
-                        <p style="color: #475569; font-size: 14px;">UPI ID: <b>{OWNER_UPI}</b></p>
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi%3A%2F%2Fpay%3Fpa%3D{OWNER_UPI}%26pn%3D{urllib.parse.quote(COMPANY_NAME)}%26am%3D{st.session_state.selected_amt}%26cu%3DINR" alt="UPI QR Code" style="margin: 10px 0; border: 4px solid white; border-radius: 6px;">
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.
