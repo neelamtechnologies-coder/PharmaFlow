@@ -31,7 +31,6 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def trigger_dual_backup():
-    """Saves a secure mirror backup of the database on every modification."""
     try:
         backup_filename = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
         shutil.copyfile(DB_FILE, backup_filename)
@@ -39,7 +38,6 @@ def trigger_dual_backup():
         print(f"Backup error: {e}")
 
 def restore_from_mirror_if_needed():
-    """Restores database from mirror backup if the main database was wiped out on reboot."""
     mirror_file = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
     if not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0:
         if os.path.exists(mirror_file):
@@ -179,7 +177,6 @@ def init_db():
     ''')
     conn.commit()
 
-    # Default fallback data if table is completely empty
     c.execute("SELECT COUNT(*) FROM wholesalers;")
     if c.fetchone()[0] == 0:
         c.execute("""
@@ -701,7 +698,7 @@ if st.session_state.role == "SUPER_ADMIN":
                             UPDATE system_config 
                             SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? 
                             WHERE id = 1;
-                        """, (new_comp, new_user, new_upi, new_phone.strip(), new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
+                        """, (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip()))
                     conn.commit()
                     trigger_dual_backup()
                     st.success("Settings updated successfully! Rebooting application...")
@@ -1482,4 +1479,13 @@ elif st.session_state.role == "RETAILER":
                                 st.markdown(f"""
                                 <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
                                     <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Now click below to send transaction details to Admin on WhatsApp:</p>
-                                    <a
+                                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
+                                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
+                                            💬 Share Transaction Details on WhatsApp for Approval
+                                        </button>
+                                    </a>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                st.rerun()
+
+    conn.close()
