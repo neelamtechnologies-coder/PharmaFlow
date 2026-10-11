@@ -632,29 +632,4 @@ elif st.session_state.role == "SUPER_ADMIN":
             new_comp = st.text_input("Company / Brand Name", value=COMPANY_NAME)
             new_user = st.text_input("Admin Username", value=ADMIN_USER)
             new_pwd = st.text_input("New Admin Password (leave blank to keep current)", type="password")
-            new_upi = st.text_input("Official Business UPI ID (for direct payments)", value=OWNER_UPI)
-            new_phone = st.text_input("Admin WhatsApp Phone Number (with Country Code, e.g. 919876543210)", value=ADMIN_PHONE)
-            
-            st.markdown("---")
-            st.markdown("#### 💰 Variable Subscription Pricing Control (Market-wise)")
-            st.markdown("##### 🖥️ Single System Plan")
-            new_monthly = st.number_input("Single Monthly Fee (₹)", value=MONTHLY_FEE)
-            new_yearly = st.number_input("Single Yearly Fee (₹)", value=YEARLY_FEE)
-            
-            st.markdown("##### 💻💻 Multi System (Enterprise Server/Client) Plan")
-            new_ent_monthly = st.number_input("Multi System Monthly Fee (₹)", value=ENT_MONTHLY_FEE)
-            new_ent_yearly = st.number_input("Multi System Yearly Fee (₹)", value=ENT_YEARLY_FEE)
-            
-            st.markdown("---")
-            st.markdown("#### 🤖 Master Gemini API Key (Central Scanner Key)")
-            new_gemini_key = st.text_input("Gemini API Key", value=MASTER_GEMINI_KEY, type="password", help="Enter your Google AI Studio API key here so all retailers can use the AI bill scanner automatically.")
-
-            st.markdown("---")
-            st.markdown("#### ☁️ AWS S3 Cloud Backup Storage Configuration")
-            new_backup_target = st.text_input("AWS S3 Cloud Backup Bucket URL / Endpoint", value=CLIENT_BACKUP_TARGET)
-            
-            if st.form_submit_button("Save All Variable Settings"):
-                try:
-                    c = conn.cursor()
-                    if new_pwd:
-                        c.execute("UPDATE system_config SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly
+            new_upi = st.text_
