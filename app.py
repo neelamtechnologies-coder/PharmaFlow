@@ -1181,4 +1181,307 @@ elif st.session_state.role == "RETAILER":
                     """
                 bill_html += f"""
                     </table>
-                    <hr
+                    <hr style="border-color: #000;">
+                    <h3 style="text-align: right; margin: 5px 0;">Grand Total: ₹{inv['grand_total']:.2f}</h3>
+                    <p style="text-align: right; font-size: 11px; color: #008000; margin: 0;">You Saved: ₹{inv['total_savings']:.2f}</p>
+                    <br>
+                    <p style="text-align: center; font-size: 11px; color: #333; margin: 10px 0 2px 0;">Thank You! Get Well Soon.</p>
+                    <p style="text-align: center; font-size: 10px; color: #000; font-weight: bold; margin: 0;">Powered by {COMPANY_NAME}</p>
+                </div>
+                <script>
+                    function printBill() {{
+                        var printContents = document.getElementById('printable-bill').innerHTML;
+                        var originalContents = document.body.innerHTML;
+                        document.body.innerHTML = printContents;
+                        window.print();
+                        document.body.innerHTML = originalContents;
+                        window.location.reload();
+                    }}
+                </script>
+                <div style="text-align: center; margin-top: 15px;">
+                    <button onclick="printBill()" style="background-color:#007bff; color:white; padding:12px 25px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-size:16px;">
+                        🖨️ Select Printer & Print Thermal Slip
+                    </button>
+                </div>
+                """
+                components.html(bill_html, height=520)
+                
+                if st.button("✖️ Close / Clear Preview"):
+                    st.session_state.last_invoice = None
+                    st.rerun()
+        else:
+            st.info("No active stock available in inventory.")
+
+    # TAB 3: DASHBOARD
+    if tab3 is not None:
+        with tab3:
+            st.subheader("📊 Inventory Dashboard & Low Stock Alerts")
+            
+            df_inv = pd.read_sql_query("""
+                SELECT MIN(id) as id, name, batch, SUM(quantity) as quantity, MIN(min_stock) as min_stock, 
+                       MAX(expiry_date) as expiry_date, MAX(price) as price, MAX(discount_percent) as discount_percent, 
+                       MAX(gst_percent) as gst_percent, MAX(is_schedule_h) as is_schedule_h 
+                FROM inventory 
+                WHERE retailer_id = ? 
+                GROUP BY name, batch 
+                ORDER BY name ASC, expiry_date ASC;
+            """, conn, params=(st.session_state.user_id,))
+            
+            if not df_inv.empty:
+                df_inv.index = range(1, len(df_inv) + 1)
+
+                low_stock_df = df_inv[df_inv['quantity'] <= df_inv['min_stock']]
+                
+                if not low_stock_df.empty:
+                    st.error(f"🚨 **Low Stock Alert:** Found {len(low_stock_df)} medicine(s) running low on stock! Please check below.")
+                    st.dataframe(low_stock_df[['name', 'batch', 'quantity', 'min_stock', 'expiry_date', 'price']], use_container_width=True)
+                    st.markdown("---")
+
+                st.markdown("### 📋 Complete Inventory Catalog")
+                st.markdown("💡 *Tip: Click on any cell to edit values directly, then click 'Save Database Changes'.*")
+                
+                def highlight_low_stock(row):
+                    if row['quantity'] <= row['min_stock']:
+                        return ['background-color: #ffe6e6; color: #900'] * len(row)
+                    return [''] * len(row)
+
+                styled_df = df_inv.style.apply(highlight_low_stock, axis=1)
+
+                edited_inv_df = st.data_editor(
+                    styled_df, 
+                    use_container_width=True, 
+                    key="inventory_editor",
+                    column_config={"id": None}
+                )
+                
+                if st.button("💾 Save Database Changes", type="primary"):
+                    try:
+                        for _, row in edited_inv_df.iterrows():
+                            c.execute("""
+                                UPDATE inventory 
+                                SET name = ?, batch = ?, quantity = ?, min_stock = ?, price = ?, discount_percent = ?, gst_percent = ?, is_schedule_h = ?, expiry_date = ?
+                                WHERE id = ? AND retailer_id = ?;
+                            """, (str(row['name']).upper(), str(row['batch']).upper(), int(row['quantity']), int(row['min_stock']), float(row['price']), float(row['discount_percent']), float(row['gst_percent']), int(row['is_schedule_h']), str(row['expiry_date']), int(row['id']), st.session_state.user_id))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Inventory updated successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving changes: {e}")
+            else:
+                st.info("No inventory items found.")
+
+    # TAB 4: NEAR EXPIRY
+    if tab4 is not None:
+        with tab4:
+            st.subheader("📦 30-Day & 90-Day Expiry Return Reminders")
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            limit_30 = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+            limit_90 = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+            
+            exp_filter = st.radio("Select Expiry Window", ["⚠️ 30-Day Critical Expiry Return", "📦 90-Day Extended Expiry Return"], horizontal=True)
+            
+            if "30-Day" in exp_filter:
+                st.markdown("#### 🚨 Medicines Expiring Within the Next 30 Days (Immediate Return)")
+                df_exp30 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND expiry_date >= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_30, today_str))
+                if not df_exp30.empty:
+                    df_exp30.index = range(1, len(df_exp30) + 1)
+                    st.dataframe(df_exp30, use_container_width=True)
+                    st.warning("⚠️ Critical: These items must be returned to the distributor immediately to prevent financial loss.")
+                else:
+                    st.success("🎉 No items expiring in the next 30 days!")
+            else:
+                st.markdown("#### 📦 Medicines Expiring Within the Next 90 Days")
+                df_exp90 = pd.read_sql_query("SELECT name, batch, quantity, expiry_date, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND expiry_date <= ? AND quantity > 0 ORDER BY expiry_date ASC, name ASC;", conn, params=(st.session_state.user_id, limit_90))
+                if not df_exp90.empty:
+                    df_exp90.index = range(1, len(df_exp90) + 1)
+                    st.dataframe(df_exp90, use_container_width=True)
+                    st.warning("⚠️ Near expiry items identified for distributor return.")
+                else:
+                    st.success("No near-expiry items found.")
+
+    # TAB 5: EXCEL IMPORT
+    if tab5 is not None:
+        with tab5:
+            st.subheader("📥 Bulk Import Inventory via Excel / CSV")
+            uploaded_csv = st.file_uploader("Upload CSV/Excel file", type=["csv", "xlsx"])
+            if uploaded_csv is not None:
+                st.success("File uploaded successfully!")
+
+    # TAB 6: MULTI SYSTEM TERMINAL MANAGEMENT & PASSWORD UPDATES
+    if tab7 is not None:
+        with tab6:
+            st.subheader("💻 Multi-System Terminal Management (Server / Client Counters)")
+            st.markdown("Add separate login credentials for additional billing counters (Client Terminals) or update existing terminal passwords.")
+            
+            t_sub_tab1, t_sub_tab2 = st.tabs(["➕ Add New Counter", "🔑 Update Counter Password / Remove"])
+            
+            with t_sub_tab1:
+                with st.form("add_terminal_form"):
+                    t_name = st.text_input("Counter / Terminal Name (e.g. Counter 2, Ground Floor POS)")
+                    t_user = st.text_input("Terminal Login Username")
+                    t_pass = st.text_input("Terminal Password", type="password")
+                    
+                    if st.form_submit_button("Create Billing Counter Terminal"):
+                        if t_name and t_user and t_pass:
+                            try:
+                                c.execute("""
+                                    INSERT INTO store_terminals (retailer_id, terminal_name, terminal_type, username, password_hash)
+                                    VALUES (?, ?, 'CLIENT', ?, ?)
+                                """, (st.session_state.user_id, t_name, t_user.strip(), hash_password(t_pass)))
+                                conn.commit()
+                                trigger_dual_backup()
+                                st.success(f"Billing Counter '{t_name}' successfully created!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error creating terminal: {e}")
+                        else:
+                            st.warning("Please fill in all required fields.")
+            
+            with t_sub_tab2:
+                terminals_list_df = pd.read_sql_query("SELECT id, terminal_name, username FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+                if not terminals_list_df.empty:
+                    t_opts = {f"{row['terminal_name']} (User: {row['username']})": row['id'] for _, row in terminals_list_df.iterrows()}
+                    sel_term_str = st.selectbox("Select Counter to Update Password or Delete", list(t_opts.keys()))
+                    sel_term_id = t_opts[sel_term_str]
+                    
+                    with st.form("update_term_pass_form"):
+                        new_t_pass = st.text_input("Enter New Password for Counter", type="password")
+                        col_tp1, col_tp2 = st.columns(2)
+                        with col_tp1:
+                            update_t_btn = st.form_submit_button("🔑 Update Counter Password", type="primary")
+                        with col_tp2:
+                            delete_t_btn = st.form_submit_button("🗑️ Delete Counter Terminal")
+                            
+                        if update_t_btn:
+                            if not new_t_pass or len(new_t_pass.strip()) < 4:
+                                st.error("Please enter a valid new password!")
+                            else:
+                                c.execute("UPDATE store_terminals SET password_hash = ? WHERE id = ? AND retailer_id = ?;", (hash_password(new_t_pass), sel_term_id, st.session_state.user_id))
+                                conn.commit()
+                                trigger_dual_backup()
+                                st.success("Billing counter password successfully updated! The employee will now need the new password to login.")
+                                st.rerun()
+                                
+                        if delete_t_btn:
+                            c.execute("DELETE FROM store_terminals WHERE id = ? AND retailer_id = ?;", (sel_term_id, st.session_state.user_id))
+                            conn.commit()
+                            trigger_dual_backup()
+                            st.success("Billing counter terminal successfully deleted!")
+                            st.rerun()
+                else:
+                    st.info("No billing counters available to modify.")
+            
+            st.markdown("---")
+            st.markdown("### Existing Billing Counters")
+            terminals_df = pd.read_sql_query("SELECT id, terminal_name, username, created_at FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not terminals_df.empty:
+                st.dataframe(terminals_df, use_container_width=True)
+            else:
+                st.info("No additional billing counters registered yet.")
+
+    # TAB 7 / LAST: PAYMENT REQUEST & WHATSAPP APPROVAL WORKFLOW
+    target_sub_tab = tab7 if tab7 is not None else tab6
+    if target_sub_tab is not None:
+        with target_sub_tab:
+            st.subheader("💳 Subscription Renewal & Payment Wizard")
+            st.markdown(f"Select your plan below to generate a secure payment QR code. After scanning and paying, enter your UTR to notify Admin on WhatsApp.")
+            st.info(f"🛡️ **Official Owner UPI ID:** `{OWNER_UPI}`")
+            
+            if r_payment_status == 'PENDING_APPROVAL':
+                st.warning("⏳ **Your payment verification request is currently PENDING.** Please wait while Admin verifies your UTR/Transaction ID in the bank statement and activates your plan.")
+                
+                wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
+                wa_msg += f"🏥 Store Name: {r_store}\n"
+                wa_msg += f"📦 System Architecture: {r_store_type}\n"
+                wa_msg += f"Please verify payment in bank and approve validity extension."
+                encoded_msg = urllib.parse.quote(wa_msg)
+                wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
+                
+                st.markdown(f"""
+                <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
+                    <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Need to resend details to Admin on WhatsApp?</p>
+                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
+                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
+                            💬 Resend Request on WhatsApp
+                        </button>
+                    </a>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                if "qr_generated" not in st.session_state:
+                    st.session_state.qr_generated = False
+                
+                if not st.session_state.qr_generated:
+                    with st.form("wizard_step1_form"):
+                        if r_store_type == "ENTERPRISE":
+                            plan_choice = st.radio("Select Multi-System Plan", [f"1 Month (₹ {ENT_MONTHLY_FEE})", f"1 Year (₹ {ENT_YEARLY_FEE})"])
+                            amt_val = ENT_MONTHLY_FEE if "1 Month" in plan_choice else ENT_YEARLY_FEE
+                            plan_desc = f"Enterprise Multi-System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
+                        else:
+                            plan_choice = st.radio("Select Single System Plan", [f"1 Month (₹ {MONTHLY_FEE})", f"1 Year (₹ {YEARLY_FEE})"])
+                            amt_val = MONTHLY_FEE if "1 Month" in plan_choice else YEARLY_FEE
+                            plan_desc = f"Single System Plan ({'1 Month' if '1 Month' in plan_choice else '1 Year'}) — ₹{amt_val}"
+                        
+                        gen_btn = st.form_submit_button("📱 Generate Payment QR Code", type="primary")
+                        if gen_btn:
+                            st.session_state.qr_generated = True
+                            st.session_state.selected_plan_desc = plan_desc
+                            st.session_state.selected_amt = amt_val
+                            st.rerun()
+                else:
+                    st.success(f"✅ Selected Plan: **{st.session_state.selected_plan_desc}**")
+                    st.markdown(f"""
+                    <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
+                        <h3 style="color: #1e293b; margin-top: 0;">📱 Scan Below to Pay ₹{st.session_state.selected_amt}</h3>
+                        <p style="color: #475569; font-size: 14px;">UPI ID: <b>{OWNER_UPI}</b></p>
+                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi%3A%2F%2Fpay%3Fpa%3D{OWNER_UPI}%26pn%3D{urllib.parse.quote(COMPANY_NAME)}%26am%3D{st.session_state.selected_amt}%26cu%3DINR" alt="UPI QR Code" style="margin: 10px 0; border: 4px solid white; border-radius: 6px;">
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    with st.form("wizard_step2_form"):
+                        utr_code = st.text_input("Enter 12-Digit UPI Transaction ID / UTR Number (After Payment) *", placeholder="e.g. 328471928471")
+                        col_w1, col_w2 = st.columns(2)
+                        with col_w1:
+                            submit_utr = st.form_submit_button("📤 Submit UTR & Share on WhatsApp", type="primary")
+                        with col_w2:
+                            reset_wizard = st.form_submit_button("🔄 Change Plan / QR")
+                            
+                        if reset_wizard:
+                            st.session_state.qr_generated = False
+                            st.rerun()
+                            
+                        if submit_utr:
+                            if not utr_code or len(utr_code.strip()) < 8:
+                                st.error("❌ Please enter a valid 12-digit UTR / Transaction ID after completing payment!")
+                            else:
+                                c = conn.cursor()
+                                c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
+                                conn.commit()
+                                trigger_dual_backup()
+                                
+                                wa_msg = f"🔔 *Payment & Validity Extension Request*\n"
+                                wa_msg += f"🏥 Store Name: {r_store}\n"
+                                wa_msg += f"📦 System Architecture: {r_store_type}\n"
+                                wa_msg += f"💳 Selected Plan: {st.session_state.selected_plan_desc}\n"
+                                wa_msg += f"🔢 UTR / Transaction ID: {utr_code.strip()}\n"
+                                wa_msg += f"Please verify payment in bank and approve validity extension."
+                                
+                                encoded_msg = urllib.parse.quote(wa_msg)
+                                wa_link = f"https://wa.me/{ADMIN_PHONE}?text={encoded_msg}"
+                                
+                                st.session_state.qr_generated = False
+                                st.success("🎉 Payment request registered successfully!")
+                                st.markdown(f"""
+                                <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; text-align: center; margin-top: 15px;">
+                                    <p style="color: #1f2937; font-weight: bold; margin-bottom: 15px;">Now click below to send transaction details to Admin on WhatsApp:</p>
+                                    <a href="{wa_link}" target="_blank" style="text-decoration: none;">
+                                        <button style="background-color:#25D366; color:white; padding:14px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">
+                                            💬 Share Transaction Details on WhatsApp for Approval
+                                        </button>
+                                    </a>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                st.rerun()
+
+    conn.close()
