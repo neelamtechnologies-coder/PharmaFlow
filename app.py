@@ -217,7 +217,7 @@ if not st.session_state.authenticated:
                                 st.session_state.user_id = int(t_df.iloc[0]["retailer_id"])
                                 st.session_state.terminal_type = t_df.iloc[0]["terminal_type"]
                                 conn.close()
-                                st.success(f"Billing Counter Login Successful!")
+                                st.success("Billing Counter Login Successful!")
                                 st.rerun()
                 conn.close()
                 st.error("Invalid Username or Password!")
@@ -553,16 +553,16 @@ elif st.session_state.role == "RETAILER":
     st.sidebar.markdown(f"Support Partner:\n{support_partner}\nContact: {support_phone}")
     
     if st.session_state.terminal_type == "CLIENT":
-        tabs = st.tabs(["🛒 POS Terminal", "📒 Account Master", "📖 Day Book"])
-        tab2, tab_acc, tab_day = tabs[0], tabs[1], tabs[2]
+        tabs = st.tabs(["🛒 POS Terminal", "📒 Account Master", "📖 Day Book", "💵 Receipts & Payments"])
+        tab2, tab_acc, tab_day, tab_rp = tabs[0], tabs[1], tabs[2], tabs[3]
         tab1, tab3, tab4, tab5, tab6, tab7 = None, None, None, None, None, None
     else:
         if r_store_type == "ENTERPRISE":
-            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "📥 Import", "💻 Terminals", "💳 Payment"])
-            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab5, tab6, tab7 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8]
+            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "💵 Receipts & Payments", "📥 Import", "💻 Terminals", "💳 Payment"])
+            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab_rp, tab5, tab6, tab7 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8], tabs[9]
         else:
-            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "📥 Import", "💳 Payment"])
-            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab5, tab6 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7]
+            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "💵 Receipts & Payments", "📥 Import", "💳 Payment"])
+            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab_rp, tab5, tab6 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8]
             tab7 = None
     
     conn = get_db_connection()
@@ -599,4 +599,117 @@ elif st.session_state.role == "RETAILER":
         st.subheader("🛒 Customer Billing Counter")
         cust_name = st.text_input("Customer Name", value="Walk-in")
         cust_phone = st.text_input("Phone", value="")
-        df_
+        df_active = pd.read_sql_query("SELECT name, batch, quantity, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
+        if not df_active.empty:
+            options = {f"{r['name']} | Batch: {r['batch']} | MRP: ₹{r['price']} | Stock: {r['quantity']}": r['batch'] for _, r in df_active.iterrows()}
+            sel_disp = st.selectbox("Select Item", list(options.keys()))
+            sel_batch = options[sel_disp]
+            med = df_active[df_active['batch'] == sel_batch].iloc[0]
+            qty = st.number_input("Qty", min_value=1, max_value=int(med['quantity']), value=1)
+            if st.button("Add to Cart", type="primary"):
+                st.session_state.cart.append({"name": med['name'], "batch": sel_batch, "price": med['price'], "qty": qty, "total": med['price']*qty})
+                st.success("Added!")
+                st.rerun()
+            if st.session_state.cart:
+                st.dataframe(pd.DataFrame(st.session_state.cart))
+                g_tot = sum(i['total'] for i in st.session_state.cart)
+                st.markdown(f"### Total: ₹{g_tot:.2f}")
+                if st.button("Complete Sale & Print", type="primary"):
+                    inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    c.execute("INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, inv_no, cust_name, cust_phone, g_tot))
+                    for item in st.session_state.cart:
+                        c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.session_state.cart = []
+                    st.success(f"Invoice {inv_no} generated!")
+                    st.rerun()
+
+    with tab3:
+        st.subheader("📊 Inventory Dashboard")
+        df_inv = pd.read_sql_query("SELECT name, batch, quantity, min_stock, expiry_date, price FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        if not df_inv.empty:
+            st.dataframe(df_inv, use_container_width=True)
+        else:
+            st.info("Inventory is empty.")
+
+    with tab4:
+        st.subheader("📦 Expiry Returns")
+        lim = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+        exp_df = pd.read_sql_query("SELECT name, batch, quantity, expiry_date FROM inventory WHERE retailer_id = ? AND expiry_date <= ?;", conn, params=(st.session_state.user_id, lim))
+        if not exp_df.empty:
+            st.dataframe(exp_df, use_container_width=True)
+        else:
+            st.success("No items expiring soon!")
+
+    if tab_acc is not None:
+        with tab_acc:
+            st.subheader("📒 Account Master")
+            with st.form("acc_form"):
+                an = st.text_input("Account Name")
+                ag = st.selectbox("Group", ["Sundry Debtors", "Sundry Creditors", "Bank", "Cash"])
+                op = st.number_input("Opening Balance", value=0.0)
+                if st.form_submit_button("Save Account"):
+                    c.execute("INSERT INTO account_masters (retailer_id, account_name, group_type, opening_balance, current_balance) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, an, ag, op, op))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Account saved!")
+                    st.rerun()
+            acc_list = pd.read_sql_query("SELECT account_name, group_type, current_balance FROM account_masters WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not acc_list.empty:
+                st.dataframe(acc_list, use_container_width=True)
+
+    if tab_day is not None:
+        with tab_day:
+            st.subheader("📖 Day Book")
+            with st.form("day_form"):
+                dt = st.date_input("Date", value=datetime.now())
+                vt = st.selectbox("Type", ["Receipt", "Payment", "Journal"])
+                pt = st.text_input("Particulars")
+                db = st.number_input("Debit", value=0.0)
+                cr = st.number_input("Credit", value=0.0)
+                if st.form_submit_button("Post"):
+                    c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, dt.strftime('%Y-%m-%d'), vt, pt, db, cr))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Posted!")
+                    st.rerun()
+            db_list = pd.read_sql_query("SELECT entry_date, voucher_type, particulars, debit, credit FROM day_book WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not db_list.empty:
+                st.dataframe(db_list, use_container_width=True)
+
+    # ================= PHASE 3: RECEIPT & PAYMENT VOUCHERS =================
+    if tab_rp is not None:
+        with tab_rp:
+            st.subheader("💵 Phase 3: Receipt & Payment Vouchers")
+            rp_tab1, rp_tab2 = st.tabs(["📥 Receipt Voucher (Inflow)", "📤 Payment Voucher (Outflow)"])
+            
+            with rp_tab1:
+                with st.form("receipt_voucher_form"):
+                    r_date = st.date_input("Receipt Date", value=datetime.now(), key="r_date")
+                    acc_masters_df = pd.read_sql_query("SELECT account_name FROM account_masters WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+                    acc_options = acc_masters_df['account_name'].tolist() if not acc_masters_df.empty else ["Cash", "Bank"]
+                    
+                    r_cust = st.selectbox("Receive From (Account)", acc_options, key="r_cust")
+                    r_amt = st.number_input("Amount Received (₹)", min_value=0.0, value=0.0, key="r_amt")
+                    r_mode = st.selectbox("Payment Mode", ["Cash", "UPI / Bank Transfer", "Cheque"], key="r_mode")
+                    r_narration = st.text_area("Narration / Remarks", key="r_narr")
+                    
+                    if st.form_submit_button("💾 Save Receipt Voucher", type="primary"):
+                        if r_amt > 0:
+                            try:
+                                # Credit the customer account and debit cash/bank in Day Book
+                                c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit, narration) VALUES (?, ?, 'Receipt', ?, ?, 0.0, ?);", (st.session_state.user_id, r_date.strftime('%Y-%m-%d'), f"{r_cust} ({r_mode})", r_amt, r_narration))
+                                conn.commit()
+                                trigger_dual_backup()
+                                st.success("Receipt voucher saved successfully and posted to Day Book!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                        else:
+                            st.warning("Please enter a valid amount greater than 0.")
+            
+            with rp_tab2:
+                with st.form("payment_voucher_form"):
+                    p_date = st.date_input("Payment Date", value=datetime.now(), key="p_date")
+                    acc_masters_df = pd.read_sql_query
