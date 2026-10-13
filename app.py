@@ -525,4 +525,86 @@ elif st.session_state.role == "SUPER_ADMIN":
             
             st.markdown("---")
             st.markdown("### ✅ Verify UTR & Approve Plan Extension")
-            pending_df = r_df[r_df['payment_status'] == 'PENDING_
+            pending_query = "SELECT id, store_name, store_type, subscription_status, payment_status, plan_expiry_date FROM retailers WHERE payment_status = 'PENDING_APPROVAL';"
+            pending_df = pd.read_sql_query(pending_query, conn)
+            if not pending_df.empty:
+                p_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in pending_df.iterrows()}
+                sel_p_str = st.selectbox("Select Store Requesting Approval", list(p_opts.keys()))
+                sel_p_id = p_opts[sel_p_str]
+                
+                add_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"])
+                
+                if st.button("✅ Verify Payment & Activate Plan", type="primary"):
+                    c = conn.cursor()
+                    if add_period == "1 Month":
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
+                    else:
+                        c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Payment verified and plan successfully activated!")
+                    st.rerun()
+            else:
+                st.info("No pending payment approval requests.")
+        else:
+            st.info("No retailers registered yet.")
+
+    with tab4:
+        st.markdown("### ✏️ Master Edit: Subscriptions, Status & Passwords (Admin Only)")
+        ret_query = "SELECT id, store_name, phone, store_type, subscription_status, payment_status, plan_expiry_date FROM retailers ORDER BY store_name ASC;"
+        ret_list = pd.read_sql_query(ret_query, conn)
+        if not ret_list.empty:
+            r_opts = {f"{row['store_name']} (Type: {row['store_type']}, Status: {row['subscription_status']})": row['id'] for _, row in ret_list.iterrows()}
+            sel_r_str = st.selectbox("Select Retailer for Master Control", list(r_opts.keys()))
+            sel_r_id = r_opts[sel_r_str]
+            
+            curr_r = ret_list[ret_list['id'] == sel_r_id].iloc[0]
+            
+            with st.form("admin_edit_ret_form"):
+                ed_sname = st.text_input("Store Name", value=curr_r['store_name'])
+                ed_phone = st.text_input("Phone Number (for WhatsApp OTP)", value=str(curr_r['phone'] or ''))
+                ed_stype = st.selectbox("Store Architecture / System Type", ["SINGLE", "ENTERPRISE"], index=["SINGLE", "ENTERPRISE"].index(curr_r['store_type']) if curr_r['store_type'] in ["SINGLE", "ENTERPRISE"] else 0)
+                ed_status = st.selectbox("Subscription Status", ["ACTIVE", "TRIAL", "EXPIRED"], index=["ACTIVE", "TRIAL", "EXPIRED"].index(curr_r['subscription_status']) if curr_r['subscription_status'] in ["ACTIVE", "TRIAL", "EXPIRED"] else 0)
+                ed_expiry = st.text_input("Plan Expiry Date (YYYY-MM-DD)", value=str(curr_r['plan_expiry_date'])[:10] if curr_r['plan_expiry_date'] else "")
+                ed_rpass = st.text_input("New Password (leave blank to keep current)", type="password")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_r = st.form_submit_button("Update Master Settings", type="primary")
+                with col2:
+                    delete_r = st.form_submit_button("🗑️ Delete Retailer (Trial/Pending/Expired Only)")
+                    
+                if update_r:
+                    c = conn.cursor()
+                    if ed_rpass:
+                        c.execute("UPDATE retailers SET store_name = ?, phone = ?, store_type = ?, subscription_status = ?, plan_expiry_date = ?, password_hash = ? WHERE id = ?;", (ed_sname, ed_phone.strip(), ed_stype, ed_status, ed_expiry.strip(), hash_password(ed_rpass), sel_r_id))
+                    else:
+                        c.execute("UPDATE retailers SET store_name = ?, phone = ?, store_type = ?, subscription_status = ?, plan_expiry_date = ? WHERE id = ?;", (ed_sname, ed_phone.strip(), ed_stype, ed_status, ed_expiry.strip(), sel_r_id))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Retailer master settings successfully updated!")
+                    st.rerun()
+                    
+                if delete_r:
+                    expiry_dt = datetime.strptime(str(curr_r['plan_expiry_date'])[:10], '%Y-%m-%d') if curr_r['plan_expiry_date'] else datetime.now()
+                    is_trial = str(curr_r['subscription_status']).upper() == 'TRIAL'
+                    is_pending = str(curr_r['payment_status']).upper() in ['PENDING', 'PENDING_APPROVAL']
+                    is_expired = expiry_dt < datetime.now()
+                    
+                    if is_trial or is_pending or is_expired:
+                        c = conn.cursor()
+                        c.execute("DELETE FROM retailers WHERE id = ?;", (sel_r_id,))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Retailer successfully deleted!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Deletion Blocked! This retailer has an ACTIVE paid subscription.")
+        else:
+            st.info("No retailers available to edit.")
+
+    with tab5:
+        st.markdown("### Variable Subscription Pricing & Master Override")
+        st.info(f"Official Central Payment UPI ID: **{OWNER_UPI}**\n* **Single System Plan:** Monthly: **₹ {MONTHLY_FEE}** | Yearly: **₹ {YEARLY_FEE}**\n* **Multi System (Enterprise) Plan:** Monthly: **₹ {ENT_MONTHLY_FEE}** | Yearly: **₹ {ENT_YEARLY_FEE}**")
+        
+        retailers_list = pd.read_sql_query("SELECT id, store_name, store_type FROM retailers ORDER BY store_name ASC;",
