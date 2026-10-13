@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 import os
 import shutil
-import glob
 import json
 from datetime import datetime, timedelta
 from PIL import Image
@@ -39,9 +38,6 @@ def restore_from_mirror_if_needed():
     if not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0:
         if os.path.exists(mirror_file):
             shutil.copyfile(mirror_file, DB_FILE)
-    elif os.path.exists(mirror_file) and os.path.getsize(DB_FILE) < 1000:
-        if os.path.getsize(mirror_file) > os.path.getsize(DB_FILE):
-            shutil.copyfile(mirror_file, DB_FILE)
 
 restore_from_mirror_if_needed()
 
@@ -58,38 +54,9 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS day_book (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, entry_date DATE, voucher_type TEXT, particulars TEXT, debit REAL DEFAULT 0.0, credit REAL DEFAULT 0.0, narration TEXT);")
     conn.commit()
 
-    c.execute("PRAGMA table_info(system_config);")
-    columns = [col[1] for col in c.fetchall()]
-    if "admin_phone" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN admin_phone TEXT DEFAULT '919876543210';")
-    if "monthly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN monthly_fee REAL DEFAULT 599.0;")
-    if "yearly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN yearly_fee REAL DEFAULT 5999.0;")
-    if "enterprise_monthly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_monthly_fee REAL DEFAULT 999.0;")
-    if "enterprise_yearly_fee" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN enterprise_yearly_fee REAL DEFAULT 9999.0;")
-    if "client_backup_target" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket';")
-    if "gemini_api_key" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN gemini_api_key TEXT DEFAULT '';")
-    conn.commit()
-
-    c.execute("SELECT COUNT(*) FROM system_config;")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key) VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', '');")
-        conn.commit()
-
     c.execute("CREATE TABLE IF NOT EXISTS wholesalers (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT NOT NULL, owner_name TEXT, email TEXT UNIQUE NOT NULL, phone TEXT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, commission_rate REAL DEFAULT 10.0, created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')));")
     
     c.execute("CREATE TABLE IF NOT EXISTS retailers (id INTEGER PRIMARY KEY AUTOINCREMENT, wholesaler_id INTEGER, store_name TEXT NOT NULL, owner_name TEXT, email TEXT UNIQUE NOT NULL, phone TEXT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, store_type TEXT DEFAULT 'SINGLE', subscription_status TEXT DEFAULT 'TRIAL', plan_expiry_date TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes', '+7 days')), payment_status TEXT DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')), FOREIGN KEY(wholesaler_id) REFERENCES wholesalers(id) ON DELETE SET NULL);")
-
-    c.execute("PRAGMA table_info(retailers);")
-    r_columns = [col[1] for col in c.fetchall()]
-    if "store_type" not in r_columns:
-        c.execute("ALTER TABLE retailers ADD COLUMN store_type TEXT DEFAULT 'SINGLE';")
-    conn.commit()
 
     c.execute("CREATE TABLE IF NOT EXISTS store_terminals (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, terminal_name TEXT NOT NULL, terminal_type TEXT DEFAULT 'CLIENT', username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')), FOREIGN KEY(retailer_id) REFERENCES retailers(id) ON DELETE CASCADE);")
 
@@ -215,23 +182,21 @@ if not st.session_state.authenticated:
                                 st.session_state.user_id = int(t_df.iloc[0]["retailer_id"])
                                 st.session_state.terminal_type = t_df.iloc[0]["terminal_type"]
                                 conn.close()
-                                st.success(f"Billing Counter ({t_df.iloc[0]['terminal_name']}) Login Successful!")
+                                st.success(f"Billing Counter Login Successful!")
                                 st.rerun()
                 conn.close()
                 st.error("Invalid Username or Password!")
 
     with auth_tab2:
-        st.markdown("### 🔒 Secure Password Reset with User-Specific WhatsApp OTP")
-        
+        st.markdown("### 🔒 Secure Password Reset with WhatsApp OTP")
         if not st.session_state.reset_otp_sent:
             with st.form("request_otp_form"):
-                f_role = st.selectbox("Select Account Type", ["Retailer (Medical Store Server)", "Billing Counter Terminal", "Distributor (Wholesaler)", "Super Admin"])
+                f_role = st.selectbox("Select Account Type", ["Retailer", "Counter Terminal", "Distributor", "Super Admin"])
                 f_user = st.text_input("Username / Email")
                 f_new_pass = st.text_input("New Password", type="password")
                 f_confirm = st.text_input("Confirm New Password", type="password")
                 
-                req_otp_btn = st.form_submit_button("💬 Send OTP to User's WhatsApp")
-                
+                req_otp_btn = st.form_submit_button("💬 Send OTP to WhatsApp")
                 if req_otp_btn:
                     if not f_user or not f_new_pass:
                         st.warning("Please fill in all fields.")
@@ -240,186 +205,144 @@ if not st.session_state.authenticated:
                     else:
                         conn = get_db_connection()
                         c = conn.cursor()
-                        target_phone = None
-                        exists = False
+                        target_phone = "919876543210"
                         
-                        if f_role == "Super Admin":
-                            if f_user == ADMIN_USER:
-                                exists = True
-                                target_phone = ADMIN_PHONE
-                        elif f_role == "Distributor (Wholesaler)":
-                            c.execute("SELECT phone FROM wholesalers WHERE username = ? OR email = ?;", (f_user, f_user))
-                            row = c.fetchone()
-                            if row and row[0] and str(row[0]).strip() != "":
-                                exists = True
-                                target_phone = str(row[0]).strip()
-                        elif f_role == "Billing Counter Terminal":
-                            c.execute("SELECT r.phone FROM store_terminals st JOIN retailers r ON st.retailer_id = r.id WHERE st.username = ?;", (f_user,))
-                            row = c.fetchone()
-                            if row and row[0] and str(row[0]).strip() != "":
-                                exists = True
-                                target_phone = str(row[0]).strip()
-                        else:
-                            c.execute("SELECT phone FROM retailers WHERE username = ? OR email = ?;", (f_user, f_user))
-                            row = c.fetchone()
-                            if row and row[0] and str(row[0]).strip() != "":
-                                exists = True
-                                target_phone = str(row[0]).strip()
+                        generated = str(random.randint(100000, 999999))
+                        st.session_state.generated_otp = generated
+                        st.session_state.reset_target_user = f_user
+                        st.session_state.reset_target_role = f_role
+                        st.session_state.reset_new_pass = f_new_pass
+                        
+                        otp_msg = f"🔐 OTP: {generated}"
+                        st.session_state.reset_wa_link = f"https://wa.me/{target_phone}?text={urllib.parse.quote(otp_msg)}"
+                        st.session_state.reset_otp_sent = True
                         conn.close()
-                        
-                        if exists and target_phone:
-                            generated = str(random.randint(100000, 999999))
-                            st.session_state.generated_otp = generated
-                            st.session_state.reset_target_user = f_user
-                            st.session_state.reset_target_role = f_role
-                            st.session_state.reset_new_pass = f_new_pass
-                            
-                            otp_msg = f"🔐 *Password Reset OTP*\nYour verification OTP for {COMPANY_NAME} account ({f_user}) is: *{generated}*\nDo not share this OTP with anyone."
-                            encoded_otp_msg = urllib.parse.quote(otp_msg)
-                            clean_target_phone = "".join(filter(str.isdigit, target_phone))
-                            st.session_state.reset_wa_link = f"https://wa.me/{clean_target_phone}?text={encoded_otp_msg}"
-                            
-                            st.session_state.reset_otp_sent = True
-                            st.success(f"📲 OTP generated for user phone ({target_phone})! Click the WhatsApp button below to open chat and send OTP.")
-                            st.rerun()
-                        else:
-                            st.error("❌ User not found OR registered mobile number is missing for this user!")
+                        st.success("OTP generated!")
+                        st.rerun()
         else:
-            st.warning("⚠️ **Step 2:** Click the button below to open WhatsApp with the user's registered number:")
-            st.markdown(
-                f'<div style="margin-bottom: 20px; text-align: center;">'
-                f'<a href="{st.session_state.reset_wa_link}" target="_blank" style="text-decoration: none;">'
-                f'<button style="background-color:#25D366; color:white; padding:12px 24px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:16px;">'
-                f'💬 Click here to open WhatsApp & get OTP</button></a></div>',
-                unsafe_allow_html=True
-            )
-            
-            st.info(f"💡 **Developer Note / Quick Test OTP:** `{st.session_state.generated_otp}`")
-            
+            st.markdown(f'<a href="{st.session_state.reset_wa_link}" target="_blank">Open WhatsApp for OTP</a>', unsafe_allow_html=True)
             with st.form("verify_otp_form"):
-                entered_otp = st.text_input("Enter 6-Digit WhatsApp OTP", placeholder="Enter 6-digit code")
-                verify_btn = st.form_submit_button("✅ Verify OTP & Update Password", type="primary")
-                
+                entered_otp = st.text_input("Enter 6-Digit OTP")
+                verify_btn = st.form_submit_button("Verify & Update Password")
                 if verify_btn:
                     if entered_otp.strip() == st.session_state.generated_otp:
                         conn = get_db_connection()
                         c = conn.cursor()
-                        
-                        if st.session_state.reset_target_role == "Super Admin":
-                            c.execute("UPDATE system_config SET super_admin_password_hash = ? WHERE id = 1;", (hash_password(st.session_state.reset_new_pass),))
-                        elif st.session_state.reset_target_role == "Distributor (Wholesaler)":
-                            c.execute("UPDATE wholesalers SET password_hash = ? WHERE username = ? OR email = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user, st.session_state.reset_target_user))
-                        elif st.session_state.reset_target_role == "Billing Counter Terminal":
-                            c.execute("UPDATE store_terminals SET password_hash = ? WHERE username = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user))
-                        else:
-                            c.execute("UPDATE retailers SET password_hash = ? WHERE username = ? OR email = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user, st.session_state.reset_target_user))
-                            
+                        c.execute("UPDATE retailers SET password_hash = ? WHERE username = ?;", (hash_password(st.session_state.reset_new_pass), st.session_state.reset_target_user))
                         conn.commit()
                         conn.close()
-                        trigger_dual_backup()
-                        
                         st.session_state.reset_otp_sent = False
-                        st.session_state.generated_otp = ""
-                        st.success("🎉 Password successfully reset and updated securely via WhatsApp OTP verification!")
+                        st.success("Password updated successfully!")
                         st.rerun()
                     else:
-                        st.error("❌ Invalid OTP! Please enter the correct 6-digit code.")
-            
-            if st.button("🔄 Cancel / Restart Reset"):
-                st.session_state.reset_otp_sent = False
-                st.rerun()
-                
+                        st.error("Invalid OTP!")
     st.stop()
 
 st.sidebar.title(f"User: {st.session_state.username}")
-sidebar_info_text = f"Role: {st.session_state.role} | Terminal: {st.session_state.terminal_type}"
-st.sidebar.info(sidebar_info_text)
+st.sidebar.info(f"Role: {st.session_state.role}")
 if st.sidebar.button("Logout"):
     st.session_state.authenticated = False
     st.session_state.user_id = None
-    st.session_state.cart = []
-    st.session_state.terminal_type = "SERVER"
     st.rerun()
 
-# ==============================================================================
-# 📦 WHOLESALER / DISTRIBUTOR DASHBOARD
-# ==========================================
-elif st.session_state.role == "WHOLESALER":
+# ================= RETAILER DASHBOARD =================
+elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
-    w_info = pd.read_sql_query("SELECT company_name, commission_rate FROM wholesalers WHERE id = ?;", conn, params=(st.session_state.user_id,))
-    w_name = w_info.iloc[0]["company_name"]
-    w_comm = w_info.iloc[0]["commission_rate"]
+    r_query = "SELECT store_name, store_type, subscription_status, plan_expiry_date, payment_status FROM retailers WHERE id = ?;"
+    r_info = pd.read_sql_query(r_query, conn, params=(st.session_state.user_id,))
+    conn.close()
     
-    st.title(f"📦 Distributor Support Portal: {w_name}")
-    st.info(f"Your Commission Share: **{w_comm}%** | Role: Ground Support & Retailer Management")
+    r_store = r_info.iloc[0]["store_name"]
+    r_store_type = r_info.iloc[0]["store_type"]
+    
+    st.title(f"🏥 {r_store} - Medical Store ERP")
+    
+    tab_list = ["🛒 Customer Billing", "📒 Account Master", "📖 Day Book"]
+    tabs = st.tabs(tab_list)
+    tab_bill, tab_acc, tab_day = tabs[0], tabs[1], tabs[2]
+    
+    conn = get_db_connection()
+    c = conn.cursor()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📂 My Network Retailers", "➕ Register New Retailer", "✅ Payment Approvals", "✏️ Edit Store Details"])
-
-    with tab1:
-        st.markdown("### Retailers assigned under your support network")
-        my_ret = pd.read_sql_query("SELECT id, store_name, owner_name, email, phone, store_type, subscription_status, payment_status, plan_expiry_date, created_at FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
-        if not my_ret.empty:
-            st.dataframe(my_ret, use_container_width=True)
-        else:
-            st.info("No retailers registered under your network yet.")
-
-    with tab2:
-        st.markdown("### Register New Medical Store (Trial Setup)")
-        with st.form("add_retailer_form"):
-            s_name = st.text_input("Medical Store Name")
-            o_name = st.text_input("Retailer Owner Name")
-            email = st.text_input("Retailer Email (Unique)")
-            phone = st.text_input("Phone Number (for WhatsApp OTP)")
-            s_type = st.selectbox("Store Architecture / System Type (Trial Phase Choice)", ["SINGLE (Single System Setup)", "ENTERPRISE (Multi System Server/Client Setup)"])
-            r_user = st.text_input("Main Server Username")
-            r_pass = st.text_input("Main Server Password", type="password")
+    with tab_bill:
+        st.subheader("🛒 Customer Billing Counter")
+        cust_name = st.text_input("Customer Name", value="Walk-in Customer")
+        cust_phone = st.text_input("Customer Phone", value="")
+        
+        active_query = "SELECT name, batch, quantity, price FROM inventory WHERE retailer_id = ? AND quantity > 0;"
+        df_active = pd.read_sql_query(active_query, conn, params=(st.session_state.user_id,))
+        
+        if not df_active.empty:
+            options = {f"{row['name']} | Batch: {row['batch']} | MRP: ₹{row['price']} | Stock: {row['quantity']}": row['batch'] for _, row in df_active.iterrows()}
+            sel_disp = st.selectbox("Select Medicine", list(options.keys()))
+            sel_batch = options[sel_disp]
+            med_row = df_active[df_active['batch'] == sel_batch].iloc[0]
             
-            submit_ret = st.form_submit_button("Register Store (7-Days Free Trial)")
-            if submit_ret:
-                if s_name and email and r_user and r_pass and phone:
-                    try:
-                        c = conn.cursor()
-                        store_category = "ENTERPRISE" if "ENTERPRISE" in s_type else "SINGLE"
-                        
-                        insert_retailer_query = "INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+5 hours', '+30 minutes', '+7 days'), datetime('now', '+5 hours', '+30 minutes'));"
-                        
-                        c.execute(insert_retailer_query, (st.session_state.user_id, s_name, o_name, email, phone.strip(), store_category, r_user, hash_password(r_pass)))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success(f"Retailer '{s_name}' ({store_category}) successfully registered with 7 days free trial!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                else:
-                    st.warning("Please fill in all required fields including phone number.")
-
-    with tab3:
-        st.markdown("### ✅ Pending Payment Approvals for Your Network")
-        my_pending_df = pd.read_sql_query("SELECT id, store_name, store_type, subscription_status, payment_status, plan_expiry_date FROM retailers WHERE wholesaler_id = ? AND payment_status = 'PENDING_APPROVAL';", conn, params=(st.session_state.user_id,))
-        if not my_pending_df.empty:
-            mp_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in my_pending_df.iterrows()}
-            sel_mp_str = st.selectbox("Select Store Requesting Approval", list(mp_opts.keys()))
-            sel_mp_id = mp_opts[sel_mp_str]
-            
-            add_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"], key="wholesaler_period")
-            
-            if st.button("✅ Verify Payment & Activate Plan", type="primary", key="wholesaler_verify_btn"):
-                c = conn.cursor()
-                if add_period == "1 Month":
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
-                else:
-                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
-                conn.commit()
-                trigger_dual_backup()
-                st.success("Payment verified and plan successfully activated!")
+            qty = st.number_input("Quantity", min_value=1, max_value=int(med_row['quantity']), value=1)
+            if st.button("➕ Add to Cart", type="primary"):
+                st.session_state.cart.append({"name": med_row['name'], "batch": sel_batch, "price": med_row['price'], "qty": qty, "total": med_row['price'] * qty})
+                st.success("Added to cart!")
                 st.rerun()
+                
+            if st.session_state.cart:
+                st.markdown("### Cart Items")
+                cart_df = pd.DataFrame(st.session_state.cart)
+                st.dataframe(cart_df, use_container_width=True)
+                g_total = cart_df['total'].sum()
+                st.markdown(f"### Grand Total: ₹{g_total:.2f}")
+                
+                if st.button("🖨️ Complete Sale", type="primary"):
+                    inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    c.execute("INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, inv_no, cust_name, cust_phone, g_total))
+                    for item in st.session_state.cart:
+                        c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
+                    conn.commit()
+                    st.session_state.cart = []
+                    st.success(f"Sale completed successfully! Invoice: {inv_no}")
+                    st.rerun()
         else:
-            st.info("No pending payment approvals in your network.")
+            st.info("No stock available in inventory.")
 
-    with tab4:
-        st.markdown("### ✏️ Edit Store Name, Phone & Password (Dealer Secure Access)")
-        st.info("💡 Note: Dealers cannot change subscription status or plan expiry dates. Only Super Admin can approve payments.")
-        my_ret_list = pd.read_sql_query("SELECT id, store_name, phone, subscription_status, payment_status, plan_expiry_date FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
-        if not my_ret_list.empty:
-            r_opts = {f"{row['store_name']} (Phone: {row['phone']}, Status: {row['subscription_status']})": row['id'] for _, row in my_ret_list.iterrows()}
-            sel_r_str = st.selectbox("Select Retailer
+    with tab_acc:
+        st.subheader("📒 Account Master & Ledgers")
+        with st.form("create_account_form"):
+            acc_name = st.text_input("Account Name (Customer / Supplier)")
+            acc_group = st.selectbox("Group", ["Sundry Debtors", "Sundry Creditors", "Bank Accounts", "Cash"])
+            op_bal = st.number_input("Opening Balance (₹)", value=0.0)
+            if st.form_submit_button("Save Account"):
+                c.execute("INSERT INTO account_masters (retailer_id, account_name, group_type, opening_balance, current_balance) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, acc_name, acc_group, op_bal, op_bal))
+                conn.commit()
+                st.success("Account created successfully!")
+                st.rerun()
+        
+        acc_df = pd.read_sql_query("SELECT account_name, group_type, current_balance FROM account_masters WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        if not acc_df.empty:
+            st.dataframe(acc_df, use_container_width=True)
+
+    with tab_day:
+        st.subheader("📖 Day Book")
+        with st.form("daybook_form"):
+            v_date = st.date_input("Date", value=datetime.now())
+            v_type = st.selectbox("Voucher Type", ["Receipt", "Payment", "Journal"])
+            v_part = st.text_input("Particulars")
+            v_deb = st.number_input("Debit (₹)", value=0.0)
+            v_cred = st.number_input("Credit (₹)", value=0.0)
+            if st.form_submit_button("Post Entry"):
+                c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, v_date.strftime('%Y-%m-%d'), v_type, v_part, v_deb, v_cred))
+                conn.commit()
+                st.success("Entry posted!")
+                st.rerun()
+                
+        db_df = pd.read_sql_query("SELECT entry_date, voucher_type, particulars, debit, credit FROM day_book WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        if not db_df.empty:
+            st.dataframe(db_df, use_container_width=True)
+
+    conn.close()
+
+elif st.session_state.role == "SUPER_ADMIN":
+    st.title("🛡️ Super Admin Panel")
+    ret_df = pd.read_sql_query("SELECT id, store_name, store_type, subscription_status FROM retailers;", get_db_connection())
+    if not ret_df.empty:
+        st.dataframe(ret_df, use_container_width=True)
+    else:
+        st.info("No retailers registered.")
