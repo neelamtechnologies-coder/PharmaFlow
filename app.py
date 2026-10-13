@@ -49,6 +49,13 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS system_config (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT DEFAULT 'Neelam Technologies', super_admin_username TEXT DEFAULT 'admin', super_admin_password_hash TEXT DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', upi_id TEXT DEFAULT 'neelamtech@upi', admin_phone TEXT DEFAULT '919876543210', monthly_fee REAL DEFAULT 599.0, yearly_fee REAL DEFAULT 5999.0, enterprise_monthly_fee REAL DEFAULT 999.0, enterprise_yearly_fee REAL DEFAULT 9999.0, client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', gemini_api_key TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')));")
     conn.commit()
 
+    # --- ADVANCED PHARMA ERP & ACCOUNTING TABLES ---
+    c.execute("CREATE TABLE IF NOT EXISTS account_masters (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, account_name TEXT NOT NULL, group_type TEXT, opening_balance REAL DEFAULT 0.0, current_balance REAL DEFAULT 0.0, phone TEXT, address TEXT, gst_in TEXT);")
+    c.execute("CREATE TABLE IF NOT EXISTS hsn_masters (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, hsn_code TEXT NOT NULL, description TEXT, gst_rate REAL DEFAULT 12.0);")
+    c.execute("CREATE TABLE IF NOT EXISTS manufacturers (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, manufacturer_name TEXT NOT NULL, short_code TEXT);")
+    c.execute("CREATE TABLE IF NOT EXISTS day_book (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, entry_date DATE, voucher_type TEXT, particulars TEXT, debit REAL DEFAULT 0.0, credit REAL DEFAULT 0.0, narration TEXT);")
+    conn.commit()
+
     c.execute("PRAGMA table_info(system_config);")
     columns = [col[1] for col in c.fetchall()]
     if "admin_phone" not in columns:
@@ -1160,34 +1167,4 @@ elif st.session_state.role == "RETAILER":
                     st.success(f"✅ Selected Plan: **{st.session_state.selected_plan_desc}**")
                     st.markdown(f"""
                     <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
-                        <h3 style="color: #1e293b; margin-top: 0;">📱 Scan Below to Pay ₹{st.session_state.selected_amt}</h3>
-                        <p style="color: #475569; font-size: 14px;">UPI ID: <b>{OWNER_UPI}</b></p>
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi%3A%2F%2Fpay%3Fpa%3D{OWNER_UPI}%26pn%3D{urllib.parse.quote(COMPANY_NAME)}%26am%3D{st.session_state.selected_amt}%26cu%3DINR" alt="UPI QR Code" style="margin: 10px 0; border: 4px solid white; border-radius: 6px;">
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    with st.form("wizard_step2_form"):
-                        utr_code = st.text_input("Enter 12-Digit UTR / Transaction ID *", placeholder="e.g. 328471928471")
-                        col_w1, col_w2 = st.columns(2)
-                        with col_w1:
-                            submit_utr = st.form_submit_button("📤 Submit UTR", type="primary")
-                        with col_w2:
-                            reset_wizard = st.form_submit_button("🔄 Change Plan")
-                            
-                        if reset_wizard:
-                            st.session_state.qr_generated = False
-                            st.rerun()
-                            
-                        if submit_utr:
-                            if not utr_code or len(utr_code.strip()) < 8:
-                                st.error("❌ Please enter a valid UTR number!")
-                            else:
-                                c = conn.cursor()
-                                c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
-                                conn.commit()
-                                trigger_dual_backup()
-                                st.session_state.qr_generated = False
-                                st.success("🎉 Payment request registered successfully!")
-                                st.rerun()
-
-    conn.close()
+                        <h3 style="color: #1e293b; margin-top: 0;">📱 Scan Below to
