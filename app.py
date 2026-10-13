@@ -103,11 +103,6 @@ def init_db():
         c.execute("INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate) VALUES ('Neelam Pharma Distributors', 'Rameshwar Ji', 'distributor@neelamtech.in', '9876543210', 'dist1', ?, 10.0);", (hash_password("dist123"),))
         conn.commit()
 
-    c.execute("SELECT COUNT(*) FROM retailers;")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date) VALUES (1, 'Test1 Medical Store', 'Manoj Kumar', 'retailer@neelamtech.in', '6204313058', 'SINGLE', 'teststore', ?, 'ACTIVE', 'ACTIVE', datetime('now', '+5 hours', '+30 minutes', '+30 days'));", (hash_password("store123"),))
-        conn.commit()
-
     conn.close()
     trigger_dual_backup()
 
@@ -385,4 +380,46 @@ elif st.session_state.role == "WHOLESALER":
                     try:
                         c = conn.cursor()
                         store_category = "ENTERPRISE" if "ENTERPRISE" in s_type else "SINGLE"
-                        c.execute("INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status,
+                        
+                        insert_retailer_query = "INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+5 hours', '+30 minutes', '+7 days'), datetime('now', '+5 hours', '+30 minutes'));"
+                        
+                        c.execute(insert_retailer_query, (st.session_state.user_id, s_name, o_name, email, phone.strip(), store_category, r_user, hash_password(r_pass)))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success(f"Retailer '{s_name}' ({store_category}) successfully registered with 7 days free trial!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Please fill in all required fields including phone number.")
+
+    with tab3:
+        st.markdown("### ✅ Pending Payment Approvals for Your Network")
+        my_pending_df = pd.read_sql_query("SELECT id, store_name, store_type, subscription_status, payment_status, plan_expiry_date FROM retailers WHERE wholesaler_id = ? AND payment_status = 'PENDING_APPROVAL';", conn, params=(st.session_state.user_id,))
+        if not my_pending_df.empty:
+            mp_opts = {f"{row['store_name']} (Type: {row['store_type']})": row['id'] for _, row in my_pending_df.iterrows()}
+            sel_mp_str = st.selectbox("Select Store Requesting Approval", list(mp_opts.keys()))
+            sel_mp_id = mp_opts[sel_mp_str]
+            
+            add_period = st.radio("Select Plan Duration to Verify", ["1 Month", "1 Year"], key="wholesaler_period")
+            
+            if st.button("✅ Verify Payment & Activate Plan", type="primary", key="wholesaler_verify_btn"):
+                c = conn.cursor()
+                if add_period == "1 Month":
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 month'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
+                else:
+                    c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
+                conn.commit()
+                trigger_dual_backup()
+                st.success("Payment verified and plan successfully activated!")
+                st.rerun()
+        else:
+            st.info("No pending payment approvals in your network.")
+
+    with tab4:
+        st.markdown("### ✏️ Edit Store Name, Phone & Password (Dealer Secure Access)")
+        st.info("💡 Note: Dealers cannot change subscription status or plan expiry dates. Only Super Admin can approve payments.")
+        my_ret_list = pd.read_sql_query("SELECT id, store_name, phone, subscription_status, payment_status, plan_expiry_date FROM retailers WHERE wholesaler_id = ? ORDER BY store_name ASC;", conn, params=(st.session_state.user_id,))
+        if not my_ret_list.empty:
+            r_opts = {f"{row['store_name']} (Phone: {row['phone']}, Status: {row['subscription_status']})": row['id'] for _, row in my_ret_list.iterrows()}
+            sel_r_str = st.selectbox("Select Retailer
