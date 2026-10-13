@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 import os
 import shutil
-import glob
 import json
 from datetime import datetime, timedelta
 from PIL import Image
@@ -553,16 +552,16 @@ elif st.session_state.role == "RETAILER":
     st.sidebar.markdown(f"Support Partner:\n{support_partner}\nContact: {support_phone}")
     
     if st.session_state.terminal_type == "CLIENT":
-        tabs = st.tabs(["🛒 POS Terminal", "📒 Account Master", "📖 Day Book", "💵 Receipts & Payments"])
-        tab2, tab_acc, tab_day, tab_rp = tabs[0], tabs[1], tabs[2], tabs[3]
+        tabs = st.tabs(["🛒 POS Terminal", "📒 Account Master", "📖 Day Book", "💵 Receipts & Payments", "📊 GSTR Reports"])
+        tab2, tab_acc, tab_day, tab_rp, tab_gst = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4]
         tab1, tab3, tab4, tab5, tab6, tab7 = None, None, None, None, None, None
     else:
         if r_store_type == "ENTERPRISE":
-            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "💵 Receipts & Payments", "📥 Import", "💻 Terminals", "💳 Payment"])
-            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab_rp, tab5, tab6, tab7 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8], tabs[9]
+            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "💵 Receipts & Payments", "📊 GSTR Reports", "📥 Import", "💻 Terminals", "💳 Payment"])
+            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab_rp, tab_gst, tab5, tab6, tab7 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8], tabs[9], tabs[10]
         else:
-            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "💵 Receipts & Payments", "📥 Import", "💳 Payment"])
-            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab_rp, tab5, tab6 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8]
+            tabs = st.tabs(["📸 Scan Bill", "🛒 Billing", "📊 Dashboard", "📦 Expiry", "📒 Accounts", "📖 Day Book", "💵 Receipts & Payments", "📊 GSTR Reports", "📥 Import", "💳 Payment"])
+            tab1, tab2, tab3, tab4, tab_acc, tab_day, tab_rp, tab_gst, tab5, tab6 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7], tabs[8], tabs[9]
             tab7 = None
     
     conn = get_db_connection()
@@ -678,38 +677,111 @@ elif st.session_state.role == "RETAILER":
             if not db_list.empty:
                 st.dataframe(db_list, use_container_width=True)
 
-    # ================= PHASE 3: RECEIPT & PAYMENT VOUCHERS =================
     if tab_rp is not None:
         with tab_rp:
-            st.subheader("💵 Phase 3: Receipt & Payment Vouchers")
-            rp_tab1, rp_tab2 = st.tabs(["📥 Receipt Voucher (Inflow)", "📤 Payment Voucher (Outflow)"])
+            st.subheader("💵 Receipts & Payments")
+            rp_t1, rp_t2 = st.tabs(["Receipt", "Payment"])
+            with rp_t1:
+                with st.form("rec_f"):
+                    rd = st.date_input("Date", value=datetime.now(), key="rd")
+                    rn = st.text_input("Received From", key="rn")
+                    ra = st.number_input("Amount", value=0.0, key="ra")
+                    if st.form_submit_button("Save Receipt"):
+                        c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, 'Receipt', ?, ?, 0);", (st.session_state.user_id, rd.strftime('%Y-%m-%d'), rn, ra))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Saved receipt!")
+                        st.rerun()
+            with rp_t2:
+                with st.form("pay_f"):
+                    pd_d = st.date_input("Date", value=datetime.now(), key="pd")
+                    pn = st.text_input("Paid To", key="pn")
+                    pa = st.number_input("Amount", value=0.0, key="pa")
+                    if st.form_submit_button("Save Payment"):
+                        c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, 'Payment', ?, 0, ?);", (st.session_state.user_id, pd_d.strftime('%Y-%m-%d'), pn, pa))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("Saved payment!")
+                        st.rerun()
+
+    # ================= PHASE 4: GSTR REPORTS =================
+    if tab_gst is not None:
+        with tab_gst:
+            st.subheader("📊 Phase 4: GST Reports (GSTR-1, GSTR-2, GSTR-3B)")
+            gstr_t1, gstr_t2, gstr_t3 = st.tabs(["GSTR-1 (Outward Supplies)", "GSTR-2 (Inward Supplies)", "GSTR-3B (Monthly Summary)"])
             
-            with rp_tab1:
-                with st.form("receipt_voucher_form"):
-                    r_date = st.date_input("Receipt Date", value=datetime.now(), key="r_date")
-                    acc_masters_df = pd.read_sql_query("SELECT account_name FROM account_masters WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-                    acc_options = acc_masters_df['account_name'].tolist() if not acc_masters_df.empty else ["Cash", "Bank"]
-                    
-                    r_cust = st.selectbox("Receive From (Account)", acc_options, key="r_cust")
-                    r_amt = st.number_input("Amount Received (₹)", min_value=0.0, value=0.0, key="r_amt")
-                    r_mode = st.selectbox("Payment Mode", ["Cash", "UPI / Bank Transfer", "Cheque"], key="r_mode")
-                    r_narration = st.text_area("Narration / Remarks", key="r_narr")
-                    
-                    if st.form_submit_button("💾 Save Receipt Voucher", type="primary"):
-                        if r_amt > 0:
-                            try:
-                                # Credit the customer account and debit cash/bank in Day Book
-                                c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit, narration) VALUES (?, ?, 'Receipt', ?, ?, 0.0, ?);", (st.session_state.user_id, r_date.strftime('%Y-%m-%d'), f"{r_cust} ({r_mode})", r_amt, r_narration))
-                                conn.commit()
-                                trigger_dual_backup()
-                                st.success("Receipt voucher saved successfully and posted to Day Book!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                        else:
-                            st.warning("Please enter a valid amount greater than 0.")
+            with gstr_t1:
+                st.markdown("### GSTR-1: Outward Supplies (Sales Tax Summary)")
+                sales_df = pd.read_sql_query("SELECT invoice_number, customer_name, total_amount, created_at FROM sales WHERE retailer_id = ? ORDER BY created_at DESC;", conn, params=(st.session_state.user_id,))
+                if not sales_df.empty:
+                    sales_df['Taxable_Value'] = sales_df['total_amount'] / 1.12
+                    sales_df['GST_Amount'] = sales_df['total_amount'] - sales_df['Taxable_Value']
+                    st.dataframe(sales_df, use_container_width=True)
+                    st.markdown(f"**Total Taxable Outward Supplies:** ₹{sales_df['Taxable_Value'].sum():.2f} | **Total Output GST:** ₹{sales_df['GST_Amount'].sum():.2f}")
+                else:
+                    st.info("No sales records found for GSTR-1.")
             
-            with rp_tab2:
-                with st.form("payment_voucher_form"):
-                    p_date = st.date_input("Payment Date", value=datetime.now(), key="p_date")
-                    acc_masters_df = pd.read_sql_query
+            with gstr_t2:
+                st.markdown("### GSTR-2: Inward Supplies (Purchase Tax Summary)")
+                inv_df = pd.read_sql_query("SELECT name, batch, quantity, price, gst_percent FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+                if not inv_df.empty:
+                    inv_df['Purchase_Value'] = inv_df['quantity'] * inv_df['price']
+                    inv_df['Input_GST'] = inv_df['Purchase_Value'] * (inv_df['gst_percent'] / 100.0)
+                    st.dataframe(inv_df, use_container_width=True)
+                    st.markdown(f"**Total Inward Purchases:** ₹{inv_df['Purchase_Value'].sum():.2f} | **Total Input Tax Credit (ITC):** ₹{inv_df['Input_GST'].sum():.2f}")
+                else:
+                    st.info("No purchase records found for GSTR-2.")
+            
+            with gstr_t3:
+                st.markdown("### GSTR-3B: Monthly Summary Return")
+                s_df = pd.read_sql_query("SELECT total_amount FROM sales WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+                out_tax = (s_df['total_amount'].sum() / 1.12) * 0.12 if not s_df.empty else 0.0
+                
+                p_df = pd.read_sql_query("SELECT quantity, price, gst_percent FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+                in_tax = ((p_df['quantity'] * p_df['price']) * (p_df['gst_percent'] / 100.0)).sum() if not p_df.empty else 0.0
+                
+                net_pay = max(0.0, out_tax - in_tax)
+                
+                st.markdown(f"""
+                * **Total Output Tax Payable:** ₹{out_tax:.2f}
+                * **Total Input Tax Credit (ITC):** ₹{in_tax:.2f}
+                * **Net GST Payable to Government:** ₹{net_pay:.2f}
+                """)
+
+    with tab5:
+        st.subheader("📥 Excel/CSV Import")
+        st.info("Upload file feature available.")
+
+    if tab7 is not None:
+        with tab6:
+            st.subheader("💻 Multi-System Terminals")
+            with st.form("term_form"):
+                tn = st.text_input("Terminal Name")
+                tu = st.text_input("Username")
+                tp = st.text_input("Password", type="password")
+                if st.form_submit_button("Create Counter"):
+                    c.execute("INSERT INTO store_terminals (retailer_id, terminal_name, username, password_hash) VALUES (?, ?, ?, ?);", (st.session_state.user_id, tn, tu, hash_password(tp)))
+                    conn.commit()
+                    trigger_dual_backup()
+                    st.success("Counter created!")
+                    st.rerun()
+
+    target_sub_tab = tab7 if tab7 is not None else tab6
+    if target_sub_tab is not None:
+        with target_sub_tab:
+            st.subheader("💳 Payment & Subscription")
+            if r_payment_status == 'PENDING_APPROVAL':
+                st.warning("Payment verification pending.")
+            else:
+                amt = 999.0 if r_store_type=="ENTERPRISE" else 599.0
+                st.markdown(f"Pay ₹{amt} to UPI: `{OWNER_UPI}`")
+                with st.form("utr_form"):
+                    utr = st.text_input("Enter 12-Digit UTR")
+                    if st.form_submit_button("Submit UTR"):
+                        c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
+                        conn.commit()
+                        trigger_dual_backup()
+                        st.success("UTR submitted!")
+                        st.rerun()
+
+    conn.close()
