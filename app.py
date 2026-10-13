@@ -45,7 +45,7 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    c.execute("CREATE TABLE IF NOT EXISTS system_config (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT DEFAULT 'Neelam Technologies', super_admin_username TEXT DEFAULT 'admin', super_admin_password_hash TEXT DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', upi_id TEXT DEFAULT 'neelamtech@upi', admin_phone TEXT DEFAULT '919876543210', monthly_fee REAL DEFAULT 599.0, yearly_fee REAL DEFAULT 5999.0, enterprise_monthly_fee REAL DEFAULT 999.0, enterprise_yearly_fee REAL DEFAULT 9999.0, client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', aws_access_key TEXT DEFAULT '', aws_secret_key TEXT DEFAULT '', gemini_api_key TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')));")
+    c.execute("CREATE TABLE IF NOT EXISTS system_config (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT DEFAULT 'Neelam Technologies', super_admin_username TEXT DEFAULT 'admin', super_admin_password_hash TEXT DEFAULT '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', upi_id TEXT DEFAULT 'neelamtech@upi', admin_phone TEXT DEFAULT '919876543210', monthly_fee REAL DEFAULT 599.0, yearly_fee REAL DEFAULT 5999.0, enterprise_monthly_fee REAL DEFAULT 999.0, enterprise_yearly_fee REAL DEFAULT 9999.0, client_backup_target TEXT DEFAULT 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', gemini_api_key TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')));")
     conn.commit()
 
     c.execute("CREATE TABLE IF NOT EXISTS account_masters (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, account_name TEXT NOT NULL, group_type TEXT, opening_balance REAL DEFAULT 0.0, current_balance REAL DEFAULT 0.0, phone TEXT, address TEXT, gst_in TEXT);")
@@ -54,17 +54,9 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS day_book (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, entry_date DATE, voucher_type TEXT, particulars TEXT, debit REAL DEFAULT 0.0, credit REAL DEFAULT 0.0, narration TEXT);")
     conn.commit()
 
-    c.execute("PRAGMA table_info(system_config);")
-    columns = [col[1] for col in c.fetchall()]
-    if "aws_access_key" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN aws_access_key TEXT DEFAULT '';")
-    if "aws_secret_key" not in columns:
-        c.execute("ALTER TABLE system_config ADD COLUMN aws_secret_key TEXT DEFAULT '';")
-    conn.commit()
-
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, aws_access_key, aws_secret_key, gemini_api_key) VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', '', '', '');")
+        c.execute("INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key) VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', '');")
         conn.commit()
 
     c.execute("CREATE TABLE IF NOT EXISTS wholesalers (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT NOT NULL, owner_name TEXT, email TEXT UNIQUE NOT NULL, phone TEXT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, commission_rate REAL DEFAULT 10.0, created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')));")
@@ -116,7 +108,7 @@ if "reset_wa_link" not in st.session_state:
     st.session_state.reset_wa_link = ""
 
 conn = get_db_connection()
-config_query = "SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, aws_access_key, aws_secret_key, gemini_api_key FROM system_config LIMIT 1;"
+config_query = "SELECT company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key FROM system_config LIMIT 1;"
 config_df = pd.read_sql_query(config_query, conn)
 conn.close()
 
@@ -131,8 +123,6 @@ if not config_df.empty:
     ENT_MONTHLY_FEE = float(config_df.iloc[0]["enterprise_monthly_fee"])
     ENT_YEARLY_FEE = float(config_df.iloc[0]["enterprise_yearly_fee"])
     CLIENT_BACKUP_TARGET = str(config_df.iloc[0]["client_backup_target"]).strip()
-    AWS_ACCESS_KEY = str(config_df.iloc[0]["aws_access_key"]).strip()
-    AWS_SECRET_KEY = str(config_df.iloc[0]["aws_secret_key"]).strip()
     MASTER_GEMINI_KEY = str(config_df.iloc[0]["gemini_api_key"]).strip()
 else:
     COMPANY_NAME = "Neelam Technologies"
@@ -145,8 +135,6 @@ else:
     ENT_MONTHLY_FEE = 999.0
     ENT_YEARLY_FEE = 9999.0
     CLIENT_BACKUP_TARGET = "https://s3.amazonaws.com/neelam-technologies-backup-bucket"
-    AWS_ACCESS_KEY = ""
-    AWS_SECRET_KEY = ""
     MASTER_GEMINI_KEY = ""
 
 if not st.session_state.authenticated:
@@ -501,17 +489,15 @@ elif st.session_state.role == "SUPER_ADMIN":
             new_ent_yearly = st.number_input("Enterprise Yearly Fee", value=ENT_YEARLY_FEE)
             new_gemini_key = st.text_input("Gemini API Key", value=MASTER_GEMINI_KEY, type="password")
             new_backup_target = st.text_input("AWS S3 Backup URL", value=CLIENT_BACKUP_TARGET)
-            new_aws_access = st.text_input("AWS Access Key", value=AWS_ACCESS_KEY, type="password")
-            new_aws_secret = st.text_input("AWS Secret Key", value=AWS_SECRET_KEY, type="password")
             
             if st.form_submit_button("Save All Settings"):
                 c = conn.cursor()
                 if new_pwd:
-                    up_q = "UPDATE system_config SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, aws_access_key = ?, aws_secret_key = ?, gemini_api_key = ? WHERE id = 1;"
-                    params = (new_comp, new_user, hash_password(new_pwd), new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_aws_access.strip(), new_aws_secret.strip(), new_gemini_key.strip())
+                    up_q = "UPDATE system_config SET company_name = ?, super_admin_username = ?, super_admin_password_hash = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? WHERE id = 1;"
+                    params = (new_comp, new_user, hash_password(new_pwd), new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip())
                 else:
-                    up_q = "UPDATE system_config SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, aws_access_key = ?, aws_secret_key = ?, gemini_api_key = ? WHERE id = 1;"
-                    params = (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_aws_access.strip(), new_aws_secret.strip(), new_gemini_key.strip())
+                    up_q = "UPDATE system_config SET company_name = ?, super_admin_username = ?, upi_id = ?, admin_phone = ?, monthly_fee = ?, yearly_fee = ?, enterprise_monthly_fee = ?, enterprise_yearly_fee = ?, client_backup_target = ?, gemini_api_key = ? WHERE id = 1;"
+                    params = (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip())
                 c.execute(up_q, params)
                 conn.commit()
                 trigger_dual_backup()
@@ -562,194 +548,4 @@ elif st.session_state.role == "RETAILER":
             uploaded_file = st.file_uploader("Choose Bill", type=["jpg", "png", "pdf"]) if up_mode=="Upload File" else st.camera_input("Capture")
             if uploaded_file is not None:
                 pil_image = Image.open(uploaded_file)
-                st.image(pil_image, width=300)
-                if st.button("Scan Bill via AI", type="primary"):
-                    active_key = MASTER_GEMINI_KEY or os.environ.get("GEMINI_API_KEY")
-                    if active_key:
-                        client = genai.Client(api_key=active_key)
-                        prompt = "Extract items with name, batch, quantity, price, expiry_date (YYYY-MM-DD), discount_percent, gst_percent, is_schedule_h (0/1). Return JSON array."
-                        response = client.models.generate_content(model='gemini-3.8-flash', contents=[pil_image, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
-                        st.session_state.scanned_data = pd.DataFrame(json.loads(response.text))
-                        st.success("Scanned successfully!")
-            if st.session_state.scanned_data is not None:
-                edited_scanned = st.data_editor(st.session_state.scanned_data)
-                if st.button("Save to Inventory"):
-                    for _, r in edited_scanned.iterrows():
-                        c.execute("INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, r['name'], r['batch'], int(r['quantity']), r['expiry_date'], float(r['price']), float(r['discount_percent']), float(r['gst_percent']), int(r['is_schedule_h'])))
-                    conn.commit()
-                    trigger_dual_backup()
-                    st.session_state.scanned_data = None
-                    st.success("Stock saved!")
-                    st.rerun()
-
-    with tab2:
-        st.subheader("🛒 Customer Billing Counter")
-        cust_name = st.text_input("Customer Name", value="Walk-in")
-        cust_phone = st.text_input("Phone", value="")
-        df_active = pd.read_sql_query("SELECT name, batch, quantity, price, is_schedule_h FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
-        if not df_active.empty:
-            options = {f"{r['name']} | Batch: {r['batch']} | MRP: ₹{r['price']} | Stock: {r['quantity']}": r['batch'] for _, r in df_active.iterrows()}
-            sel_disp = st.selectbox("Select Item", list(options.keys()))
-            sel_batch = options[sel_disp]
-            med = df_active[df_active['batch'] == sel_batch].iloc[0]
-            qty = st.number_input("Qty", min_value=1, max_value=int(med['quantity']), value=1)
-            if st.button("Add to Cart", type="primary"):
-                st.session_state.cart.append({"name": med['name'], "batch": sel_batch, "price": med['price'], "qty": qty, "total": med['price']*qty})
-                st.success("Added!")
-                st.rerun()
-            if st.session_state.cart:
-                st.dataframe(pd.DataFrame(st.session_state.cart))
-                g_tot = sum(i['total'] for i in st.session_state.cart)
-                st.markdown(f"### Total: ₹{g_tot:.2f}")
-                if st.button("Complete Sale & Print", type="primary"):
-                    inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    c.execute("INSERT INTO sales (retailer_id, invoice_number, customer_name, customer_phone, total_amount) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, inv_no, cust_name, cust_phone, g_tot))
-                    for item in st.session_state.cart:
-                        c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
-                    conn.commit()
-                    trigger_dual_backup()
-                    st.session_state.cart = []
-                    st.success(f"Invoice {inv_no} generated!")
-                    st.rerun()
-
-    with tab3:
-        st.subheader("📊 Inventory Dashboard")
-        df_inv = pd.read_sql_query("SELECT name, batch, quantity, min_stock, expiry_date, price FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-        if not df_inv.empty:
-            st.dataframe(df_inv, use_container_width=True)
-        else:
-            st.info("Inventory is empty.")
-
-    with tab4:
-        st.subheader("📦 Expiry Returns")
-        lim = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
-        exp_df = pd.read_sql_query("SELECT name, batch, quantity, expiry_date FROM inventory WHERE retailer_id = ? AND expiry_date <= ?;", conn, params=(st.session_state.user_id, lim))
-        if not exp_df.empty:
-            st.dataframe(exp_df, use_container_width=True)
-        else:
-            st.success("No items expiring soon!")
-
-    if tab_acc is not None:
-        with tab_acc:
-            st.subheader("📒 Account Master")
-            with st.form("acc_form"):
-                an = st.text_input("Account Name")
-                ag = st.selectbox("Group", ["Sundry Debtors", "Sundry Creditors", "Bank", "Cash"])
-                op = st.number_input("Opening Balance", value=0.0)
-                if st.form_submit_button("Save Account"):
-                    c.execute("INSERT INTO account_masters (retailer_id, account_name, group_type, opening_balance, current_balance) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, an, ag, op, op))
-                    conn.commit()
-                    trigger_dual_backup()
-                    st.success("Account saved!")
-                    st.rerun()
-            acc_list = pd.read_sql_query("SELECT account_name, group_type, current_balance FROM account_masters WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-            if not acc_list.empty:
-                st.dataframe(acc_list, use_container_width=True)
-
-    if tab_day is not None:
-        with tab_day:
-            st.subheader("📖 Day Book")
-            with st.form("day_form"):
-                dt = st.date_input("Date", value=datetime.now())
-                vt = st.selectbox("Type", ["Receipt", "Payment", "Journal"])
-                pt = st.text_input("Particulars")
-                db = st.number_input("Debit", value=0.0)
-                cr = st.number_input("Credit", value=0.0)
-                if st.form_submit_button("Post"):
-                    c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, dt.strftime('%Y-%m-%d'), vt, pt, db, cr))
-                    conn.commit()
-                    trigger_dual_backup()
-                    st.success("Posted!")
-                    st.rerun()
-            db_list = pd.read_sql_query("SELECT entry_date, voucher_type, particulars, debit, credit FROM day_book WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-            if not db_list.empty:
-                st.dataframe(db_list, use_container_width=True)
-
-    if tab_rp is not None:
-        with tab_rp:
-            st.subheader("💵 Receipts & Payments")
-            rp_t1, rp_t2 = st.tabs(["Receipt", "Payment"])
-            with rp_t1:
-                with st.form("rec_f"):
-                    rd = st.date_input("Date", value=datetime.now(), key="rd")
-                    rn = st.text_input("Received From", key="rn")
-                    ra = st.number_input("Amount", value=0.0, key="ra")
-                    if st.form_submit_button("Save Receipt"):
-                        c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, 'Receipt', ?, ?, 0);", (st.session_state.user_id, rd.strftime('%Y-%m-%d'), rn, ra))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success("Saved receipt!")
-                        st.rerun()
-            with rp_t2:
-                with st.form("pay_f"):
-                    pd_d = st.date_input("Date", value=datetime.now(), key="pd")
-                    pn = st.text_input("Paid To", key="pn")
-                    pa = st.number_input("Amount", value=0.0, key="pa")
-                    if st.form_submit_button("Save Payment"):
-                        c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, 'Payment', ?, 0, ?);", (st.session_state.user_id, pd_d.strftime('%Y-%m-%d'), pn, pa))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success("Saved payment!")
-                        st.rerun()
-
-    if tab_gst is not None:
-        with tab_gst:
-            st.subheader("📊 GSTR Reports (GSTR-1, 2, 3B)")
-            gstr_t1, gstr_t2, gstr_t3 = st.tabs(["GSTR-1", "GSTR-2", "GSTR-3B"])
-            with gstr_t1:
-                s_df = pd.read_sql_query("SELECT invoice_number, customer_name, total_amount, created_at FROM sales WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-                if not s_df.empty:
-                    s_df['Taxable'] = s_df['total_amount'] / 1.12
-                    s_df['GST'] = s_df['total_amount'] - s_df['Taxable']
-                    st.dataframe(s_df, use_container_width=True)
-                else:
-                    st.info("No sales data.")
-            with gstr_t2:
-                i_df = pd.read_sql_query("SELECT name, batch, quantity, price, gst_percent FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
-                if not i_df.empty:
-                    i_df['Purchase_Val'] = i_df['quantity'] * i_df['price']
-                    i_df['Input_GST'] = i_df['Purchase_Val'] * (i_df['gst_percent'] / 100.0)
-                    st.dataframe(i_df, use_container_width=True)
-                else:
-                    st.info("No purchase data.")
-            with gstr_t3:
-                st.markdown("### GSTR-3B Summary")
-                st.info("Calculations active based on sales and inventory.")
-
-    with tab5:
-        st.subheader("📥 Excel/CSV Import")
-        st.info("Upload file feature available.")
-
-    if tab7 is not None:
-        with tab6:
-            st.subheader("💻 Multi-System Terminals")
-            with st.form("term_form"):
-                tn = st.text_input("Terminal Name")
-                tu = st.text_input("Username")
-                tp = st.text_input("Password", type="password")
-                if st.form_submit_button("Create Counter"):
-                    c.execute("INSERT INTO store_terminals (retailer_id, terminal_name, username, password_hash) VALUES (?, ?, ?, ?);", (st.session_state.user_id, tn, tu, hash_password(tp)))
-                    conn.commit()
-                    trigger_dual_backup()
-                    st.success("Counter created!")
-                    st.rerun()
-
-    target_sub_tab = tab7 if tab7 is not None else tab6
-    if target_sub_tab is not None:
-        with target_sub_tab:
-            st.subheader("💳 Payment & Subscription")
-            if r_payment_status == 'PENDING_APPROVAL':
-                st.warning("Payment verification pending.")
-            else:
-                amt = 999.0 if r_store_type=="ENTERPRISE" else 599.0
-                st.markdown(f"Pay ₹{amt} to UPI: `{OWNER_UPI}`")
-                with st.form("utr_form"):
-                    utr = st.text_input("Enter 12-Digit UTR")
-                    if st.form_submit_button("Submit UTR"):
-                        c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
-                        conn.commit()
-                        trigger_dual_backup()
-                        st.success("UTR submitted!")
-                        st.rerun()
-
-    conn.close()
+                st.image(pil_image, width=
