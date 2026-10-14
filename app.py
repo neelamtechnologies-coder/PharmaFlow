@@ -246,8 +246,8 @@ if st.sidebar.button("Logout"):
 elif st.session_state.role == "WHOLESALER":
     conn = get_db_connection()
     w_info = pd.read_sql_query("SELECT company_name, commission_rate FROM wholesalers WHERE id = ?;", conn, params=(st.session_state.user_id,))
-    w_name = w_info.iloc[0]["company_name"]
-    w_comm = w_info.iloc[0]["commission_rate"]
+    w_name = w_info.iloc[0]["company_name"] if not w_info.empty else "Distributor"
+    w_comm = w_info.iloc[0]["commission_rate"] if not w_info.empty else 10.0
     
     st.title(f"📦 Distributor Support Portal: {w_name}")
     st.info(f"Your Commission Share: **{w_comm}%** | Role: Ground Support & Retailer Management")
@@ -494,16 +494,19 @@ elif st.session_state.role == "SUPER_ADMIN":
 # ================= RETAILER DASHBOARD =================
 elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
-    r_info = pd.read_sql_query("SELECT r.store_name, r.store_type, r.subscription_status, r.plan_expiry_date, r.payment_status, w.company_name as support_partner, w.phone as support_phone FROM retailers r LEFT JOIN wholesalers w ON r.wholesaler_id = w.id WHERE r.id = ?;", conn, params=(st.session_state.user_id,))
+    try:
+        r_info = pd.read_sql_query("SELECT r.store_name, r.store_type, r.subscription_status, r.plan_expiry_date, r.payment_status, w.company_name as support_partner, w.phone as support_phone FROM retailers r LEFT JOIN wholesalers w ON r.wholesaler_id = w.id WHERE r.id = ?;", conn, params=(st.session_state.user_id,))
+    except Exception:
+        r_info = pd.DataFrame()
     conn.close()
     
-    r_store = r_info.iloc[0]["store_name"] if not r_info.empty else "Medical Store"
-    r_store_type = r_info.iloc[0]["store_type"] if not r_info.empty else "SINGLE"
-    r_status = r_info.iloc[0]["subscription_status"] if not r_info.empty else "ACTIVE"
-    r_payment_status = r_info.iloc[0]["payment_status"] if not r_info.empty else "ACTIVE"
-    r_expiry = r_info.iloc[0]["plan_expiry_date"] if not r_info.empty else "N/A"
-    support_partner = r_info.iloc[0]["support_partner"] if not r_info.empty and r_info.iloc[0]["support_partner"] else "Direct Support"
-    support_phone = r_info.iloc[0]["support_phone"] if not r_info.empty and r_info.iloc[0]["support_phone"] else "N/A"
+    r_store = r_info.iloc[0]["store_name"] if not r_info.empty and "store_name" in r_info.columns else "Medical Store"
+    r_store_type = r_info.iloc[0]["store_type"] if not r_info.empty and "store_type" in r_info.columns else "SINGLE"
+    r_status = r_info.iloc[0]["subscription_status"] if not r_info.empty and "subscription_status" in r_info.columns else "ACTIVE"
+    r_payment_status = r_info.iloc[0]["payment_status"] if not r_info.empty and "payment_status" in r_info.columns else "ACTIVE"
+    r_expiry = r_info.iloc[0]["plan_expiry_date"] if not r_info.empty and "plan_expiry_date" in r_info.columns else "N/A"
+    support_partner = r_info.iloc[0]["support_partner"] if not r_info.empty and "support_partner" in r_info.columns and r_info.iloc[0]["support_partner"] else "Direct Support"
+    support_phone = r_info.iloc[0]["support_phone"] if not r_info.empty and "support_phone" in r_info.columns and r_info.iloc[0]["support_phone"] else "N/A"
     
     st.title(f"🏥 {r_store} - Medical Store ERP ({st.session_state.terminal_type})")
     st.success(f"Type: **{r_store_type}** | Status: **{r_status}** | Valid Till: **{r_expiry}**")
@@ -538,11 +541,14 @@ elif st.session_state.role == "RETAILER":
                 if st.button("Scan Bill via AI", type="primary"):
                     active_key = MASTER_GEMINI_KEY or os.environ.get("GEMINI_API_KEY")
                     if active_key:
-                        client = genai.Client(api_key=active_key)
-                        prompt = "Extract items with name, batch, quantity, price, expiry_date (YYYY-MM-DD), discount_percent, gst_percent, is_schedule_h (0/1). Return JSON array."
-                        response = client.models.generate_content(model='gemini-2.5-flash', contents=[pil_image, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
-                        st.session_state.scanned_data = pd.DataFrame(json.loads(response.text))
-                        st.success("Scanned successfully!")
+                        try:
+                            client = genai.Client(api_key=active_key)
+                            prompt = "Extract items with name, batch, quantity, price, expiry_date (YYYY-MM-DD), discount_percent, gst_percent, is_schedule_h (0/1). Return JSON array."
+                            response = client.models.generate_content(model='gemini-flash-latest', contents=[pil_image, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
+                            st.session_state.scanned_data = pd.DataFrame(json.loads(response.text))
+                            st.success("Scanned successfully!")
+                        except Exception as e:
+                            st.error(f"AI Scan Error: {e}")
             if st.session_state.scanned_data is not None:
                 edited_scanned = st.data_editor(st.session_state.scanned_data)
                 if st.button("Save to Inventory"):
@@ -703,17 +709,3 @@ elif st.session_state.role == "RETAILER":
     if target_sub_tab is not None:
         with target_sub_tab:
             st.subheader("💳 Payment & Subscription")
-            if r_payment_status == 'PENDING_APPROVAL':
-                st.warning("Payment verification pending.")
-            else:
-                amt = 999.0 if r_store_type=="ENTERPRISE" else 599.0
-                st.markdown(f"Pay ₹{amt} to UPI: `{OWNER_UPI}`")
-                with st.form("utr_form"):
-                    utr = st.text_input("Enter 12-Digit UTR")
-                    if st.form_submit_button("Submit UTR"):
-                        c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
-                        conn.commit()
-                        st.success("UTR submitted!")
-                        st.rerun()
-
-    conn.close()
