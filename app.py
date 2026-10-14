@@ -17,6 +17,7 @@ import random
 BACKUP_DIR = "cloud_backups"
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+# Primary database direct cloud_backups folder ke andar
 DB_FILE = os.path.join(BACKUP_DIR, "medical_store.db")
 
 def get_db_connection():
@@ -26,19 +27,8 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def trigger_dual_backup():
-    try:
-        mirror_filename = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
-        if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
-            shutil.copyfile(DB_FILE, mirror_filename)
-    except Exception as e:
-        print(f"Backup error: {e}")
-
-def restore_from_mirror_if_needed():
-    mirror_file = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
-    if (not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0) and os.path.exists(mirror_file) and os.path.getsize(mirror_file) > 0:
-        shutil.copyfile(mirror_file, DB_FILE)
-
-restore_from_mirror_if_needed()
+    # Database cloud_backups folder mein hi hai, isliye data already safe hai
+    pass
 
 def init_db():
     conn = get_db_connection()
@@ -75,7 +65,6 @@ def init_db():
         conn.commit()
 
     conn.close()
-    trigger_dual_backup()
 
 init_db()
 
@@ -287,7 +276,6 @@ elif st.session_state.role == "WHOLESALER":
                         ins_q = "INSERT INTO retailers (wholesaler_id, store_name, owner_name, email, phone, store_type, username, password_hash, subscription_status, payment_status, plan_expiry_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TRIAL', 'PENDING', datetime('now', '+5 hours', '+30 minutes', '+7 days'), datetime('now', '+5 hours', '+30 minutes'));"
                         c.execute(ins_q, (st.session_state.user_id, s_name, o_name, email, phone.strip(), store_category, r_user, hash_password(r_pass)))
                         conn.commit()
-                        trigger_dual_backup()
                         st.success(f"Retailer '{s_name}' ({store_category}) successfully registered!")
                         st.rerun()
                     except Exception as e:
@@ -312,7 +300,6 @@ elif st.session_state.role == "WHOLESALER":
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_mp_id,))
                 conn.commit()
-                trigger_dual_backup()
                 st.success("Payment verified and plan successfully activated!")
                 st.rerun()
         else:
@@ -338,7 +325,6 @@ elif st.session_state.role == "WHOLESALER":
                     else:
                         c.execute("UPDATE retailers SET store_name = ?, phone = ? WHERE id = ? AND wholesaler_id = ?;", (ed_sname, ed_phone.strip(), sel_r_id, st.session_state.user_id))
                     conn.commit()
-                    trigger_dual_backup()
                     st.success("Store details updated successfully!")
                     st.rerun()
         else:
@@ -385,7 +371,6 @@ elif st.session_state.role == "SUPER_ADMIN":
                         c = conn.cursor()
                         c.execute("INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?);", (c_name, o_name, email, phone, w_user, hash_password(w_pass), comm))
                         conn.commit()
-                        trigger_dual_backup()
                         st.success(f"Distributor '{c_name}' successfully added!")
                         st.rerun()
                     except Exception as e:
@@ -413,7 +398,6 @@ elif st.session_state.role == "SUPER_ADMIN":
                     else:
                         c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (sel_p_id,))
                     conn.commit()
-                    trigger_dual_backup()
                     st.success("Payment verified and plan successfully activated!")
                     st.rerun()
             else:
@@ -447,8 +431,7 @@ elif st.session_state.role == "SUPER_ADMIN":
                     else:
                         c.execute("UPDATE retailers SET store_name = ?, phone = ?, store_type = ?, subscription_status = ?, plan_expiry_date = ? WHERE id = ?;", (ed_sname, ed_phone.strip(), ed_stype, ed_status, ed_expiry.strip(), sel_r_id))
                     conn.commit()
-                    trigger_dual_backup()
-                    st.success("Retailer master settings successfully updated!")
+                    st.success("Store details updated successfully!")
                     st.rerun()
         else:
             st.info("No retailers available to edit.")
@@ -470,7 +453,6 @@ elif st.session_state.role == "SUPER_ADMIN":
                 else:
                     c.execute("UPDATE retailers SET plan_expiry_date = datetime(COALESCE(NULLIF(plan_expiry_date, ''), datetime('now')), '+1 year'), payment_status = 'ACTIVE', subscription_status = 'ACTIVE' WHERE id = ?;", (r_id,))
                 conn.commit()
-                trigger_dual_backup()
                 st.success("Plan extended successfully!")
                 st.rerun()
 
@@ -499,7 +481,6 @@ elif st.session_state.role == "SUPER_ADMIN":
                     params = (new_comp, new_user, new_upi, new_phone.strip(), new_monthly, new_yearly, new_ent_monthly, new_ent_yearly, new_backup_target.strip(), new_gemini_key.strip())
                 c.execute(up_q, params)
                 conn.commit()
-                trigger_dual_backup()
                 st.success("Settings updated! Rebooting...")
                 st.rerun()
     conn.close()
@@ -562,7 +543,6 @@ elif st.session_state.role == "RETAILER":
                     for _, r in edited_scanned.iterrows():
                         c.execute("INSERT INTO inventory (retailer_id, name, batch, quantity, expiry_date, price, discount_percent, gst_percent, is_schedule_h) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, r['name'], r['batch'], int(r['quantity']), r['expiry_date'], float(r['price']), float(r['discount_percent']), float(r['gst_percent']), int(r['is_schedule_h'])))
                     conn.commit()
-                    trigger_dual_backup()
                     st.session_state.scanned_data = None
                     st.success("Stock saved!")
                     st.rerun()
@@ -592,7 +572,6 @@ elif st.session_state.role == "RETAILER":
                     for item in st.session_state.cart:
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
-                    trigger_dual_backup()
                     st.session_state.cart = []
                     st.success(f"Invoice {inv_no} generated!")
                     st.rerun()
@@ -624,7 +603,6 @@ elif st.session_state.role == "RETAILER":
                 if st.form_submit_button("Save Account"):
                     c.execute("INSERT INTO account_masters (retailer_id, account_name, group_type, opening_balance, current_balance) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, an, ag, op, op))
                     conn.commit()
-                    trigger_dual_backup()
                     st.success("Account saved!")
                     st.rerun()
             acc_list = pd.read_sql_query("SELECT account_name, group_type, current_balance FROM account_masters WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
@@ -643,7 +621,6 @@ elif st.session_state.role == "RETAILER":
                 if st.form_submit_button("Post"):
                     c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, dt.strftime('%Y-%m-%d'), vt, pt, db, cr))
                     conn.commit()
-                    trigger_dual_backup()
                     st.success("Posted!")
                     st.rerun()
             db_list = pd.read_sql_query("SELECT entry_date, voucher_type, particulars, debit, credit FROM day_book WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
@@ -662,7 +639,6 @@ elif st.session_state.role == "RETAILER":
                     if st.form_submit_button("Save Receipt"):
                         c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, 'Receipt', ?, ?, 0);", (st.session_state.user_id, rd.strftime('%Y-%m-%d'), rn, ra))
                         conn.commit()
-                        trigger_dual_backup()
                         st.success("Saved receipt!")
                         st.rerun()
             with rp_t2:
@@ -673,7 +649,6 @@ elif st.session_state.role == "RETAILER":
                     if st.form_submit_button("Save Payment"):
                         c.execute("INSERT INTO day_book (retailer_id, entry_date, voucher_type, particulars, debit, credit) VALUES (?, ?, 'Payment', ?, 0, ?);", (st.session_state.user_id, pd_d.strftime('%Y-%m-%d'), pn, pa))
                         conn.commit()
-                        trigger_dual_backup()
                         st.success("Saved payment!")
                         st.rerun()
 
@@ -715,7 +690,6 @@ elif st.session_state.role == "RETAILER":
                 if st.form_submit_button("Create Counter"):
                     c.execute("INSERT INTO store_terminals (retailer_id, terminal_name, username, password_hash) VALUES (?, ?, ?, ?);", (st.session_state.user_id, tn, tu, hash_password(tp)))
                     conn.commit()
-                    trigger_dual_backup()
                     st.success("Counter created!")
                     st.rerun()
 
@@ -733,7 +707,6 @@ elif st.session_state.role == "RETAILER":
                     if st.form_submit_button("Submit UTR"):
                         c.execute("UPDATE retailers SET payment_status = 'PENDING_APPROVAL' WHERE id = ?;", (st.session_state.user_id,))
                         conn.commit()
-                        trigger_dual_backup()
                         st.success("UTR submitted!")
                         st.rerun()
 
