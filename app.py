@@ -29,15 +29,17 @@ def hash_password(password: str) -> str:
 def trigger_dual_backup():
     try:
         backup_filename = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
-        shutil.copyfile(DB_FILE, backup_filename)
+        # Direct copy main DB to mirror backup to ensure persistence across reboots
+        if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+            shutil.copyfile(DB_FILE, backup_filename)
     except Exception as e:
         print(f"Backup error: {e}")
 
 def restore_from_mirror_if_needed():
     mirror_file = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
-    if not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0:
-        if os.path.exists(mirror_file):
-            shutil.copyfile(mirror_file, DB_FILE)
+    # Always restore from mirror if mirror exists and is valid, so user additions survive reboots
+    if os.path.exists(mirror_file) and os.path.getsize(mirror_file) > 0:
+        shutil.copyfile(mirror_file, DB_FILE)
 
 restore_from_mirror_if_needed()
 
@@ -65,7 +67,6 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS sales (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, invoice_number TEXT NOT NULL, customer_name TEXT, customer_phone TEXT, total_amount REAL NOT NULL, created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')), FOREIGN KEY(retailer_id) REFERENCES retailers(id) ON DELETE CASCADE);")
     conn.commit()
 
-    # Sirf pehli baar ke liye system config aur default distributor insert hoga agar bilkul empty ho
     c.execute("SELECT COUNT(*) FROM system_config;")
     if c.fetchone()[0] == 0:
         c.execute("INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash, upi_id, admin_phone, monthly_fee, yearly_fee, enterprise_monthly_fee, enterprise_yearly_fee, client_backup_target, gemini_api_key) VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'neelamtech@upi', '919876543210', 599.0, 5999.0, 999.0, 9999.0, 'https://s3.amazonaws.com/neelam-technologies-backup-bucket', '');")
@@ -387,7 +388,7 @@ elif st.session_state.role == "SUPER_ADMIN":
                         c = conn.cursor()
                         c.execute("INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?);", (c_name, o_name, email, phone, w_user, hash_password(w_pass), comm))
                         conn.commit()
-                        trigger_dual_backup()
+                        trigger_dual_backup() # Turant backup trigger hoga taaki reboot par data na ude
                         st.success(f"Distributor '{c_name}' successfully added!")
                         st.rerun()
                     except Exception as e:
