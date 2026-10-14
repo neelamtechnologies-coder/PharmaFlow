@@ -70,10 +70,7 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS sales (id INTEGER PRIMARY KEY AUTOINCREMENT, retailer_id INTEGER, invoice_number TEXT NOT NULL, customer_name TEXT, customer_phone TEXT, total_amount REAL NOT NULL, created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')), FOREIGN KEY(retailer_id) REFERENCES retailers(id) ON DELETE CASCADE);")
     conn.commit()
 
-    c.execute("SELECT COUNT(*) FROM wholesalers;")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate) VALUES ('Neelam Pharma Distributors', 'Rameshwar Ji', 'distributor@neelamtech.in', '9876543210', 'dist1', ?, 10.0);", (hash_password("dist123"),))
-        conn.commit()
+    # NOTE: Default hardcoded insertions hatae gaye hain taaki reboot hone par aapka data delete na ho!
 
     conn.close()
     trigger_dual_backup()
