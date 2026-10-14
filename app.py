@@ -15,10 +15,8 @@ import streamlit.components.v1 as components
 import random
 
 BACKUP_DIR = "cloud_backups"
-if not os.path.exists(BACKUP_DIR):
-    os.makedirs(BACKUP_DIR)
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
-# Primary database ko ab secure cloud_backups folder ke andar rakha hai taaki reboot par data delete na ho
 DB_FILE = os.path.join(BACKUP_DIR, "medical_store.db")
 
 def get_db_connection():
