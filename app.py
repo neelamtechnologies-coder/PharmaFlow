@@ -14,11 +14,12 @@ import urllib.parse
 import streamlit.components.v1 as components
 import random
 
-DB_FILE = "medical_store.db"
 BACKUP_DIR = "cloud_backups"
-
 if not os.path.exists(BACKUP_DIR):
     os.makedirs(BACKUP_DIR)
+
+# Primary database ko ab secure cloud_backups folder ke andar rakha hai taaki reboot par data delete na ho
+DB_FILE = os.path.join(BACKUP_DIR, "medical_store.db")
 
 def get_db_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -28,17 +29,15 @@ def hash_password(password: str) -> str:
 
 def trigger_dual_backup():
     try:
-        backup_filename = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
-        # Direct copy main DB to mirror backup to ensure persistence across reboots
+        mirror_filename = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
         if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
-            shutil.copyfile(DB_FILE, backup_filename)
+            shutil.copyfile(DB_FILE, mirror_filename)
     except Exception as e:
         print(f"Backup error: {e}")
 
 def restore_from_mirror_if_needed():
     mirror_file = os.path.join(BACKUP_DIR, "medical_store_mirror.db")
-    # Always restore from mirror if mirror exists and is valid, so user additions survive reboots
-    if os.path.exists(mirror_file) and os.path.getsize(mirror_file) > 0:
+    if (not os.path.exists(DB_FILE) or os.path.getsize(DB_FILE) == 0) and os.path.exists(mirror_file) and os.path.getsize(mirror_file) > 0:
         shutil.copyfile(mirror_file, DB_FILE)
 
 restore_from_mirror_if_needed()
@@ -388,7 +387,7 @@ elif st.session_state.role == "SUPER_ADMIN":
                         c = conn.cursor()
                         c.execute("INSERT INTO wholesalers (company_name, owner_name, email, phone, username, password_hash, commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?);", (c_name, o_name, email, phone, w_user, hash_password(w_pass), comm))
                         conn.commit()
-                        trigger_dual_backup() # Turant backup trigger hoga taaki reboot par data na ude
+                        trigger_dual_backup()
                         st.success(f"Distributor '{c_name}' successfully added!")
                         st.rerun()
                     except Exception as e:
