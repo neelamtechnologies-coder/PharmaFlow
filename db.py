@@ -2,7 +2,7 @@ import sqlite3
 import os
 import hashlib
 
-def setup_local_environment():
+def setup_local_environment(store_name="TechPharma"):
     try:
         folder_path = r"C:\PharmaFlow_Data"
         os.makedirs(folder_path, exist_ok=True)
