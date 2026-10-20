@@ -4,7 +4,7 @@ from datetime import datetime
 from db import get_db_connection, hash_password, init_db, setup_local_environment
 
 init_db()
-setup_local_environment("TechPharma")
+setup_local_environment()
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -68,7 +68,6 @@ render_header()
 st.sidebar.title(f"User: {st.session_state.username}")
 st.sidebar.info(f"Role: {st.session_state.role}")
 
-# ================= DESKTOP SHORTCUT DOWNLOAD BUTTON =================
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 shortcut_content = f"""[InternetShortcut]
@@ -88,7 +87,6 @@ if st.sidebar.button("Logout"):
     st.session_state.user_id = None
     st.rerun()
 
-# ================= SUPER ADMIN (OWNER) PANEL =================
 if st.session_state.role == "SUPER_ADMIN":
     st.subheader("🛡 Owner Central Command (Global Enterprise)")
     conn = get_db_connection()
@@ -117,7 +115,6 @@ if st.session_state.role == "SUPER_ADMIN":
                     st.error(f"Error: {e}")
     conn.close()
 
-# ================= HIERARCHY MANAGEMENT PANELS =================
 elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "DISTRICT_HEAD", "SSE"]:
     st.subheader(f"🏢 Hierarchy Portal: {st.session_state.role}")
     conn = get_db_connection()
@@ -146,7 +143,6 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "DISTRICT_HEAD", "S
                 st.rerun()
     conn.close()
 
-# ================= RETAILER PANEL =================
 elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
     r_info = pd.read_sql_query("SELECT store_name, store_type FROM retailers WHERE id = ?;", conn, params=(st.session_state.user_id,))
