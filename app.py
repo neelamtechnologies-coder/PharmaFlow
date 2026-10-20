@@ -2,13 +2,10 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
-import json
-from datetime import datetime, timedelta
-from PIL import Image
 import hashlib
 
 # ================= AUTOMATIC C DRIVE & DESKTOP SETUP =================
-def setup_local_environment(store_name="PharmaFlow"):
+def setup_local_environment(store_name="TechPharma"):
     try:
         folder_path = r"C:\PharmaFlow_Data"
         os.makedirs(folder_path, exist_ok=True)
@@ -19,7 +16,7 @@ def setup_local_environment(store_name="PharmaFlow"):
     try:
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
         if os.path.exists(desktop):
-            shortcut_path = os.path.join(desktop, f"PharmaFlow - {store_name}.url")
+            shortcut_path = os.path.join(desktop, f"TechPharma - {store_name}.url")
             app_url = "https://share.streamlit.io" 
             shortcut_content = f"""[InternetShortcut]
 URL={app_url}
@@ -56,7 +53,7 @@ def init_db():
             admin_phone TEXT DEFAULT '919876543210'
         );""")
         
-        # True Business Hierarchy Table
+        # 6-Tier Hierarchy Table (Country Head, State Head, District Head, SSE)
         c.execute("""CREATE TABLE IF NOT EXISTS hierarchy_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_id INTEGER,
@@ -133,11 +130,13 @@ if "authenticated" not in st.session_state:
 if "cart" not in st.session_state:
     st.session_state.cart = []
 
+# ================= BRANDED HEADER =================
 def render_header():
     st.markdown("""
-        <div style="text-align: center; padding: 12px; background-color: #f8f9fa; border-radius: 10px; margin-bottom: 20px;">
-            <h1 style="color: #1f77b4; margin-bottom: 0px; font-size: 34px;">💊 PharmaFlow</h1>
-            <p style="font-size: 10px; color: #6c757d; margin-top: 2px; letter-spacing: 1.5px; font-weight: 600;">POWERED BY NEELAM TECHNOLOGIES</p>
+        <div style="text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 10px; margin-bottom: 20px;">
+            <h1 style="color: #1f77b4; margin-bottom: 2px; font-size: 34px;">💊 TechPharma Solutions</h1>
+            <p style="font-size: 13px; color: #495057; margin-bottom: 5px; font-style: italic;">“The Smart Way to Manage Your Pharmacy – Fast Billing, Zero Expiry Stress.”</p>
+            <p style="font-size: 10px; color: #6c757d; margin-top: 0px; letter-spacing: 1.5px; font-weight: 600;">POWERED BY NEELAM TECHNOLOGIES</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -254,6 +253,57 @@ elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
     r_info = pd.read_sql_query("SELECT store_name, store_type FROM retailers WHERE id = ?;", conn, params=(st.session_state.user_id,))
     r_store = r_info.iloc[0]["store_name"] if not r_info.empty else "Medical Store"
+    r_type = r_info.iloc[0]["store_type"] if not r_info.empty else "SINGLE"
     conn.close()
+    
     st.subheader(f"🏥 {r_store} - Retailer ERP")
-    st.write("Welcome to your billing and inventory portal.")
+    tab_bill, tab_inv, tab_term = st.tabs(["🛒 POS Billing", "📊 Inventory", "💻 Counter Terminals"])
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    with tab_bill:
+        st.subheader("Billing Counter")
+        df_active = pd.read_sql_query("SELECT name, batch, quantity, price FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
+        if not df_active.empty:
+            sel_item = st.selectbox("Select Medicine", df_active['name'].unique())
+            med_row = df_active[df_active['name'] == sel_item].iloc[0]
+            qty = st.number_input("Quantity", min_value=1, max_value=int(med_row['quantity']), value=1)
+            if st.button("Add to Cart"):
+                st.session_state.cart.append({"name": sel_item, "batch": med_row['batch'], "price": med_row['price'], "qty": qty, "total": med_row['price']*qty})
+                st.success("Added!")
+                st.rerun()
+            if st.session_state.cart:
+                st.dataframe(pd.DataFrame(st.session_state.cart))
+                if st.button("Complete Sale"):
+                    g_tot = sum(i['total'] for i in st.session_state.cart)
+                    inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    c.execute("INSERT INTO sales (retailer_id, invoice_number, total_amount) VALUES (?, ?, ?);", (st.session_state.user_id, inv_no, g_tot))
+                    for item in st.session_state.cart:
+                        c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
+                    conn.commit()
+                    st.session_state.cart = []
+                    st.success(f"Invoice {inv_no} generated!")
+                    st.rerun()
+
+    with tab_inv:
+        st.subheader("Inventory Stock")
+        inv_df = pd.read_sql_query("SELECT name, batch, quantity, price FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        st.dataframe(inv_df, use_container_width=True)
+
+    with tab_term:
+        if r_type == "ENTERPRISE":
+            st.subheader("Manage Counter Client Terminals")
+            with st.form("add_counter"):
+                t_name = st.text_input("Counter Name")
+                t_user = st.text_input("Counter Username")
+                t_pass = st.text_input("Counter Password", type="password")
+                if st.form_submit_button("Create Counter Client"):
+                    c.execute("INSERT INTO store_terminals (retailer_id, terminal_name, terminal_type, username, password_hash) VALUES (?, ?, 'CLIENT', ?, ?);", (st.session_state.user_id, t_name, t_user, hash_password(t_pass)))
+                    conn.commit()
+                    st.success("Counter terminal created!")
+                    st.rerun()
+            terminals_df = pd.read_sql_query("SELECT terminal_name, username, terminal_type FROM store_terminals WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            st.dataframe(terminals_df, use_container_width=True)
+        else:
+            st.warning("Counter Terminals are available only in Enterprise Plan.")
+    conn.close()
