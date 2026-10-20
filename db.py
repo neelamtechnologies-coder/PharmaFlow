@@ -35,7 +35,6 @@ def init_db():
             gemini_api_key TEXT DEFAULT ''
         );""")
         
-        # 6-Tier Hierarchy Table
         c.execute("""CREATE TABLE IF NOT EXISTS hierarchy_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_id INTEGER,
