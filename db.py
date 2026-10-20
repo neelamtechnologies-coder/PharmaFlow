@@ -26,7 +26,7 @@ def init_db():
         conn = get_db_connection()
         c = conn.cursor()
         
-        # System Config Table
+        # System Config Table (Updated with TechPharma brand name)
         c.execute("""CREATE TABLE IF NOT EXISTS system_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             company_name TEXT DEFAULT 'Neelam Technologies', 
@@ -37,7 +37,7 @@ def init_db():
             gemini_api_key TEXT DEFAULT ''
         );""")
         
-        # True Business Hierarchy Table (Country Head, State Head, District Head, SSE)
+        # 6-Tier Hierarchy Table (Country Head, State Head, District Head, SSE)
         c.execute("""CREATE TABLE IF NOT EXISTS hierarchy_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_id INTEGER,
