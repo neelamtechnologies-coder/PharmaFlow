@@ -11,7 +11,7 @@ def setup_local_environment(store_name="TechPharma"):
         folder_path = os.path.join(os.path.expanduser("~"), "PharmaFlow_Data")
         os.makedirs(folder_path, exist_ok=True)
         
-    # 2. Desktop Shortcut Creation (Checking both OneDrive and Normal Desktop)
+    # 2. Desktop Shortcut Creation with Multiple Path Fallback
     try:
         user_home = os.path.expanduser("~")
         desktop_paths = [
@@ -20,18 +20,28 @@ def setup_local_environment(store_name="TechPharma"):
             os.path.join(user_home, "OneDrive - Personal", "Desktop")
         ]
         
-        shortcut_content = """[InternetShortcut]
+        shortcut_content = f"""[InternetShortcut]
 URL=https://share.streamlit.io
 IconIndex=0
 """
         
+        created = False
         for desktop in desktop_paths:
             if os.path.exists(desktop):
                 shortcut_path = os.path.join(desktop, f"TechPharma - {store_name}.url")
-                if not os.path.exists(shortcut_path):
-                    with open(shortcut_path, "w") as f:
-                        f.write(shortcut_content)
+                with open(shortcut_path, "w") as f:
+                    f.write(shortcut_content)
+                created = True
+                print(f"Shortcut successfully created at: {shortcut_path}")
                 break
+                
+        if not created:
+            fallback_desktop = os.path.join(user_home, "Desktop")
+            os.makedirs(fallback_desktop, exist_ok=True)
+            shortcut_path = os.path.join(fallback_desktop, f"TechPharma - {store_name}.url")
+            with open(shortcut_path, "w") as f:
+                f.write(shortcut_content)
+                
     except Exception as e:
         print(f"Desktop Shortcut Error: {e}")
         
