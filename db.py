@@ -2,14 +2,39 @@ import sqlite3
 import os
 import hashlib
 
-# C Drive ya User profile mein secure data folder setup
-def setup_local_environment():
+def setup_local_environment(store_name="TechPharma"):
+    # 1. C Drive mein secure folder banana
     try:
         folder_path = r"C:\PharmaFlow_Data"
         os.makedirs(folder_path, exist_ok=True)
     except Exception:
         folder_path = os.path.join(os.path.expanduser("~"), "PharmaFlow_Data")
         os.makedirs(folder_path, exist_ok=True)
+        
+    # 2. Desktop Shortcut Creation (Checking both OneDrive and Normal Desktop)
+    try:
+        user_home = os.path.expanduser("~")
+        desktop_paths = [
+            os.path.join(user_home, "Desktop"),
+            os.path.join(user_home, "OneDrive", "Desktop"),
+            os.path.join(user_home, "OneDrive - Personal", "Desktop")
+        ]
+        
+        shortcut_content = """[InternetShortcut]
+URL=https://share.streamlit.io
+IconIndex=0
+"""
+        
+        for desktop in desktop_paths:
+            if os.path.exists(desktop):
+                shortcut_path = os.path.join(desktop, f"TechPharma - {store_name}.url")
+                if not os.path.exists(shortcut_path):
+                    with open(shortcut_path, "w") as f:
+                        f.write(shortcut_content)
+                break
+    except Exception as e:
+        print(f"Desktop Shortcut Error: {e}")
+        
     return folder_path
 
 LOCAL_FOLDER = setup_local_environment()
@@ -26,7 +51,6 @@ def init_db():
         conn = get_db_connection()
         c = conn.cursor()
         
-        # System Config Table (Updated with TechPharma brand name)
         c.execute("""CREATE TABLE IF NOT EXISTS system_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             company_name TEXT DEFAULT 'Neelam Technologies', 
@@ -37,7 +61,7 @@ def init_db():
             gemini_api_key TEXT DEFAULT ''
         );""")
         
-        # 6-Tier Hierarchy Table (Country Head, State Head, District Head, SSE)
+        # 6-Tier Hierarchy Table
         c.execute("""CREATE TABLE IF NOT EXISTS hierarchy_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_id INTEGER,
@@ -50,7 +74,6 @@ def init_db():
             created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );""")
 
-        # Retailers Table (Assigned to Sales & Service Engineer)
         c.execute("""CREATE TABLE IF NOT EXISTS retailers (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             assigned_sse_id INTEGER, 
@@ -66,7 +89,6 @@ def init_db():
             payment_status TEXT DEFAULT 'ACTIVE'
         );""")
         
-        # Counter Terminals Table (For Multi-System Enterprise Plan)
         c.execute("""CREATE TABLE IF NOT EXISTS store_terminals (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             retailer_id INTEGER, 
@@ -76,7 +98,6 @@ def init_db():
             password_hash TEXT NOT NULL
         );""")
         
-        # Inventory Table
         c.execute("""CREATE TABLE IF NOT EXISTS inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             retailer_id INTEGER, 
@@ -86,7 +107,6 @@ def init_db():
             price REAL DEFAULT 0.0
         );""")
         
-        # Sales Table
         c.execute("""CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             retailer_id INTEGER, 
@@ -97,7 +117,6 @@ def init_db():
         
         conn.commit()
 
-        # Insert default super admin if not exists
         c.execute("SELECT COUNT(*) FROM system_config;")
         if c.fetchone()[0] == 0:
             c.execute("INSERT INTO system_config (company_name, super_admin_username, super_admin_password_hash) VALUES ('Neelam Technologies', 'admin', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918');")
