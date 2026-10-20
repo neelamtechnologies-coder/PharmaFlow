@@ -4,6 +4,7 @@ from datetime import datetime
 from db import get_db_connection, hash_password, init_db, setup_local_environment
 
 init_db()
+setup_local_environment("TechPharma")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -15,7 +16,6 @@ if "authenticated" not in st.session_state:
 if "cart" not in st.session_state:
     st.session_state.cart = []
 
-# ================= BRANDED HEADER =================
 def render_header():
     st.markdown("""
         <div style="text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 10px; margin-bottom: 20px;">
@@ -36,7 +36,6 @@ if not st.session_state.authenticated:
                 st.session_state.authenticated = True
                 st.session_state.username = username
                 st.session_state.role = "SUPER_ADMIN"
-                setup_local_environment("Owner_Admin")
                 conn.close()
                 st.success("Owner Login Successful!")
                 st.rerun()
@@ -47,7 +46,6 @@ if not st.session_state.authenticated:
                     st.session_state.username = username
                     st.session_state.role = h_df.iloc[0]["role"]
                     st.session_state.user_id = int(h_df.iloc[0]["id"])
-                    setup_local_environment(h_df.iloc[0]["role"])
                     conn.close()
                     st.success(f"{h_df.iloc[0]['role']} Login Successful!")
                     st.rerun()
@@ -59,7 +57,6 @@ if not st.session_state.authenticated:
                         st.session_state.role = "RETAILER"
                         st.session_state.user_id = int(r_df.iloc[0]["id"])
                         st.session_state.terminal_type = "SERVER"
-                        setup_local_environment(r_df.iloc[0]["store_name"])
                         conn.close()
                         st.success("Retailer Login Successful!")
                         st.rerun()
@@ -70,6 +67,22 @@ if not st.session_state.authenticated:
 render_header()
 st.sidebar.title(f"User: {st.session_state.username}")
 st.sidebar.info(f"Role: {st.session_state.role}")
+
+# ================= DESKTOP SHORTCUT DOWNLOAD BUTTON =================
+st.sidebar.markdown("---")
+st.sidebar.subheader("🖥 Quick Actions")
+shortcut_content = f"""[InternetShortcut]
+URL=https://share.streamlit.io
+IconIndex=0
+"""
+st.sidebar.download_button(
+    label="📥 Download Desktop Icon",
+    data=shortcut_content,
+    file_name=f"TechPharma - {st.session_state.username}.url",
+    mime="text/plain",
+    help="Click to download shortcut directly to your Desktop!"
+)
+
 if st.sidebar.button("Logout"):
     st.session_state.authenticated = False
     st.session_state.user_id = None
