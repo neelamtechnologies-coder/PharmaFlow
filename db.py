@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import hashlib
+import base64
 
 def setup_local_environment():
     try:
@@ -10,13 +11,22 @@ def setup_local_environment():
         folder_path = os.path.join(os.path.expanduser("~"), "PharmaFlow_Data")
         os.makedirs(folder_path, exist_ok=True)
     
-    # Automatically generate a default icon file so Windows displays it instead of Chrome icon
+    # Generate a valid .ico file using base64 so Windows recognizes it properly
     ico_path = os.path.join(folder_path, "icon.ico")
     if not os.path.exists(ico_path):
         try:
-            # Writing a minimal valid ICO file header/bytes so Windows recognizes it instantly
+            # Valid minimal 16x16 ICO file encoded in base64
+            ico_base64 = (
+                "AAABAAEAEBAQAAEABAAoAQAAFgAAACgAAAAQAAAAIAAAAAEAABAAAAAAAAAA"
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////////////////////////////////"
+                "////////////////////////////////////////////////////////////////////"
+                "////////////////////////////////////////////////////////////////////"
+                "////////////////////////////////////////////////////////////////////"
+                "////////////////////////////////////////////////////////////////////"
+                "//////////////////////////////////8="
+            )
             with open(ico_path, "wb") as f:
-                f.write(b'\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x18\x00h\x05\x00\x00\x16\x00\x00\x00(' + b'\x00'*40 + b'\xff\x00\xff'*64)
+                f.write(base64.b64decode(ico_base64))
         except Exception:
             pass
 
