@@ -71,29 +71,17 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 
-# Batch installer script that creates a genuine Windows .lnk shortcut with custom custom 3D medical icon
-installer_bat = """@echo off
-cls
-echo Setting up TechPharma Solutions Desktop Shortcut...
-if not exist "C:\\PharmaFlow_Data" mkdir "C:\\PharmaFlow_Data"
-
-:: Download custom icon from GitHub repository
-powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/icon.ico' -OutFile 'C:\\PharmaFlow_Data\\icon.ico' -ErrorAction SilentlyContinue"
-
-:: Create professional Windows .lnk shortcut using PowerShell
-powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\\TechPharma Solutions.lnk'); $Shortcut.TargetPath = 'https://techpharma-solutions.streamlit.app'; $Shortcut.IconLocation = 'C:\\PharmaFlow_Data\\icon.ico,0'; $Shortcut.Description = 'TechPharma Solutions Pharmacy Management'; $Shortcut.Save()"
-
-echo.
-echo Success! TechPharma Solutions icon has been created on your Desktop.
-pause
+# Standard clean browser shortcut format
+shortcut_content = f"""[InternetShortcut]
+URL=https://techpharma-solutions.streamlit.app
 """
 
 st.sidebar.download_button(
-    label="📥 Download Desktop Installer",
-    data=installer_bat,
-    file_name="Install_TechPharma.bat",
+    label="📥 Download Desktop Icon",
+    data=shortcut_content,
+    file_name="TechPharma Solutions.url",
     mime="text/plain",
-    help="Click to download installer. Double-click it once to install permanent custom 3D medical icon on Desktop!"
+    help="Click to download desktop shortcut!"
 )
 
 if st.sidebar.button("Logout"):
