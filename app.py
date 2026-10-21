@@ -7,7 +7,7 @@ init_db()
 setup_local_environment()
 
 if "authenticated" not in st.session_state:
-    st.session_state.authenticated = Falsez
+    st.session_state.authenticated = False
     st.session_state.username = ""
     st.session_state.role = ""
     st.session_state.user_id = None
@@ -71,19 +71,24 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 
-# Using built-in Windows system DLL icon for reliable professional shortcut display
-shortcut_content = f"""[InternetShortcut]
-URL=https://techpharma-solutions.streamlit.app
-IconFile=C:\\Windows\\System32\\shell32.dll
-IconIndex=21
+# VBScript to automatically create a genuine Windows .lnk shortcut with proper icon and URL on Desktop
+installer_script = """Set WshShell = CreateObject("WScript.Shell")
+strDesktop = WshShell.SpecialFolders("Desktop")
+Set oShellLink = WshShell.CreateShortcut(strDesktop & "\\TechPharma Solutions.lnk")
+oShellLink.TargetPath = "https://techpharma-solutions.streamlit.app"
+oShellLink.WindowStyle = 1
+oShellLink.IconLocation = "C:\\Windows\\System32\\shell32.dll, 21"
+oShellLink.Description = "TechPharma Solutions Pharmacy Management System"
+oShellLink.Save
+MsgBox "TechPharma Solutions shortcut has been successfully created on your Desktop!", vbInformation, "TechPharma Solutions Setup"
 """
 
 st.sidebar.download_button(
-    label="📥 Download Desktop Icon",
-    data=shortcut_content,
-    file_name="TechPharma Solutions.url",
+    label="📥 Download Desktop Installer",
+    data=installer_script,
+    file_name="Install_TechPharma_Shortcut.vbs",
     mime="text/plain",
-    help="Click to download shortcut directly to your Desktop!"
+    help="Click to download installer. Double-click it once to create a permanent professional shortcut on your Desktop!"
 )
 
 if st.sidebar.button("Logout"):
@@ -172,7 +177,7 @@ elif st.session_state.role == "RETAILER":
                 st.rerun()
             if st.session_state.cart:
                 st.dataframe(pd.DataFrame(st.session_state.cart))
-                if st.button("Complete Sale"):
+                if st.button("CompleteSale"):
                     g_tot = sum(i['total'] for i in st.session_state.cart)
                     inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                     c.execute("INSERT INTO sales (retailer_id, invoice_number, total_amount) VALUES (?, ?, ?);", (st.session_state.user_id, inv_no, g_tot))
