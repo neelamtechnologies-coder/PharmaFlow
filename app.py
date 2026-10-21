@@ -71,10 +71,11 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 
+# Using built-in Windows system DLL icon for reliable professional shortcut display
 shortcut_content = f"""[InternetShortcut]
 URL=https://techpharma-solutions.streamlit.app
-IconFile=C:\\PharmaFlow_Data\\icon.ico
-IconIndex=0
+IconFile=C:\\Windows\\System32\\shell32.dll
+IconIndex=21
 """
 
 st.sidebar.download_button(
