@@ -71,7 +71,6 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 
-# Permanent solution with embedded local icon path
 shortcut_content = f"""[InternetShortcut]
 URL=https://techpharma-solutions.streamlit.app
 IconFile=C:\\PharmaFlow_Data\\icon.ico
