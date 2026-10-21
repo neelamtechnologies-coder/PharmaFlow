@@ -79,7 +79,7 @@ IconIndex=0
 st.sidebar.download_button(
     label="📥 Download Desktop Icon",
     data=shortcut_content,
-    file_name=f"TechPharma - {st.session_state.username}.url",
+    file_name="TechPharma Solutions.url",
     mime="text/plain",
     help="Click to download shortcut directly to your Desktop!"
 )
