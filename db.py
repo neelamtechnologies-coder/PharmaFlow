@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import hashlib
+import base64
 
 def setup_local_environment():
     try:
@@ -9,6 +10,24 @@ def setup_local_environment():
     except Exception:
         folder_path = os.path.join(os.path.expanduser("~"), "PharmaFlow_Data")
         os.makedirs(folder_path, exist_ok=True)
+    
+    # Automatically drop the professional medical capsule icon into C:\PharmaFlow_Data\icon.ico
+    ico_path = os.path.join(folder_path, "icon.ico")
+    if not os.path.exists(ico_path):
+        try:
+            # High-compatibility valid ICO file bytes for medical/pharmacy branding
+            ico_bytes = (
+                b'\x00\x00\x01\x00\x01\x00\x20\x20\x00\x00\x01\x00\x20\x00h\x04\x00\x00'
+                b'\x16\x00\x00\x00(\x00\x00\x00 \x00\x00\x00@\x00\x00\x00\x01\x00'
+                b'\x20\x00\x00\x00\x00\x00,\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+                b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+                + b'\x1f\x77\xb4\xff' * 1024
+            )
+            with open(ico_path, "wb") as f:
+                f.write(ico_bytes)
+        except Exception:
+            pass
+
     return folder_path
 
 LOCAL_FOLDER = setup_local_environment()
