@@ -1,7 +1,6 @@
 import sqlite3
 import os
 import hashlib
-import base64
 
 def setup_local_environment():
     try:
@@ -10,26 +9,6 @@ def setup_local_environment():
     except Exception:
         folder_path = os.path.join(os.path.expanduser("~"), "PharmaFlow_Data")
         os.makedirs(folder_path, exist_ok=True)
-    
-    # Generate a valid .ico file using base64 so Windows recognizes it properly
-    ico_path = os.path.join(folder_path, "icon.ico")
-    if not os.path.exists(ico_path):
-        try:
-            # Valid minimal 16x16 ICO file encoded in base64
-            ico_base64 = (
-                "AAABAAEAEBAQAAEABAAoAQAAFgAAACgAAAAQAAAAIAAAAAEAABAAAAAAAAAA"
-                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//////////////////////////////////"
-                "////////////////////////////////////////////////////////////////////"
-                "////////////////////////////////////////////////////////////////////"
-                "////////////////////////////////////////////////////////////////////"
-                "////////////////////////////////////////////////////////////////////"
-                "//////////////////////////////////8="
-            )
-            with open(ico_path, "wb") as f:
-                f.write(base64.b64decode(ico_base64))
-        except Exception:
-            pass
-
     return folder_path
 
 LOCAL_FOLDER = setup_local_environment()
