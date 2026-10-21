@@ -16,6 +16,15 @@ if "authenticated" not in st.session_state:
 if "cart" not in st.session_state:
     st.session_state.cart = []
 
+ROLE_RANKS = {
+    "SUPER_ADMIN": 5,
+    "COUNTRY_HEAD": 4,
+    "STATE_HEAD": 3,
+    "ZONAL_MANAGER": 2,
+    "SSE": 1,
+    "RETAILER": 0
+}
+
 def render_header():
     st.markdown("""
         <div style="text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 10px; margin-bottom: 20px;">
@@ -71,7 +80,6 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 
-# Standard clean browser shortcut format
 shortcut_content = f"""[InternetShortcut]
 URL=https://techpharma-solutions.streamlit.app
 """
@@ -81,7 +89,7 @@ st.sidebar.download_button(
     data=shortcut_content,
     file_name="TechPharma Solutions.url",
     mime="text/plain",
-    help="Click to download desktop shortcut!"
+    help="Click to download shortcut directly to your Desktop!"
 )
 
 if st.sidebar.button("Logout"):
@@ -92,13 +100,23 @@ if st.sidebar.button("Logout"):
 if st.session_state.role == "SUPER_ADMIN":
     st.subheader("🛡 Owner Central Command (Global Enterprise)")
     conn = get_db_connection()
-    tab1, tab2 = st.tabs(["🌍 All Hierarchy Nodes", "➕ Add Country Head"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🌍 All Nodes", "➕ Add Country Head", "✏️ Edit / Delete Nodes", "🔄 Transfer Retailer"])
+    
     with tab1:
         all_nodes = pd.read_sql_query("SELECT id, role, name, email, phone, username FROM hierarchy_users;", conn)
+        st.markdown("### Hierarchy Members")
         if not all_nodes.empty:
             st.dataframe(all_nodes, use_container_width=True)
         else:
             st.info("No hierarchy nodes created yet.")
+        
+        all_rets = pd.read_sql_query("SELECT id, assigned_sse_id, store_name, owner_name, subscription_status, payment_status FROM retailers;", conn)
+        st.markdown("### All Retailers")
+        if not all_rets.empty:
+            st.dataframe(all_rets, use_container_width=True)
+        else:
+            st.info("No retailers registered yet.")
+            
     with tab2:
         with st.form("add_country_head"):
             ch_name = st.text_input("Country Head Name")
@@ -115,20 +133,77 @@ if st.session_state.role == "SUPER_ADMIN":
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
+                    
+    with tab3:
+        st.subheader("Manage / Delete Hierarchy Nodes")
+        nodes_df = pd.read_sql_query("SELECT id, role, name, username FROM hierarchy_users;", conn)
+        if not nodes_df.empty:
+            sel_node_id = st.selectbox("Select Node to Manage", nodes_df['id'], format_func=lambda x: f"{nodes_df[nodes_df['id']==x]['name'].values[0]} ({nodes_df[nodes_df['id']==x]['role'].values[0]})")
+            node_row = nodes_df[nodes_df['id'] == sel_node_id].iloc[0]
+            
+            with st.form("edit_node_form"):
+                e_name = st.text_input("Name", value=node_row['name'])
+                e_pass = st.text_input("New Password (leave blank to keep unchanged)", type="password")
+                col1, col2 = st.columns(2)
+                update_btn = col1.form_submit_button("Update Node")
+                delete_btn = col2.form_submit_button("Delete Node", type="primary")
+                
+                c = conn.cursor()
+                if update_btn:
+                    if e_pass:
+                        c.execute("UPDATE hierarchy_users SET name = ?, password_hash = ? WHERE id = ?;", (e_name, hash_password(e_pass), int(sel_node_id)))
+                    else:
+                        c.execute("UPDATE hierarchy_users SET name = ? WHERE id = ?;", (e_name, int(sel_node_id)))
+                    conn.commit()
+                    st.success("Node updated successfully!")
+                    st.rerun()
+                elif delete_btn:
+                    c.execute("DELETE FROM hierarchy_users WHERE id = ?;", (int(sel_node_id),))
+                    conn.commit()
+                    st.success("Node deleted successfully!")
+                    st.rerun()
+        else:
+            st.info("No nodes available to manage.")
+            
+    with tab4:
+        st.subheader("Transfer Retailer to Another SSE")
+        rets_all = pd.read_sql_query("SELECT id, store_name, assigned_sse_id FROM retailers;", conn)
+        sses_all = pd.read_sql_query("SELECT id, name FROM hierarchy_users WHERE role = 'SSE';", conn)
+        
+        if not rets_all.empty and not sses_all.empty:
+            with st.form("transfer_ret_admin"):
+                r_sel = st.selectbox("Select Retailer", rets_all['id'], format_func=lambda x: rets_all[rets_all['id']==x]['store_name'].values[0])
+                s_sel = st.selectbox("Select New SSE", sses_all['id'], format_func=lambda x: sses_all[sses_all['id']==x]['name'].values[0])
+                if st.form_submit_button("Transfer Retailer"):
+                    c = conn.cursor()
+                    c.execute("UPDATE retailers SET assigned_sse_id = ? WHERE id = ?;", (int(s_sel), int(r_sel)))
+                    conn.commit()
+                    st.success("Retailer successfully transferred to new SSE!")
+                    st.rerun()
+        else:
+            st.warning("Retailers or SSEs are missing in the system.")
     conn.close()
 
-elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "DISTRICT_HEAD", "SSE"]:
+elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "SSE"]:
     st.subheader(f"🏢 Hierarchy Portal: {st.session_state.role}")
     conn = get_db_connection()
-    tab1, tab2 = st.tabs(["📂 My Downline Network", "➕ Add Sub-Node / Retailer"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📂 My Downline", "➕ Add Sub-Node / Retailer", "✏️ Edit / Delete Downline", "🔄 Transfer Retailer"])
+    
     with tab1:
         sub_users = pd.read_sql_query("SELECT id, role, name, email, phone, username FROM hierarchy_users WHERE parent_id = ?;", conn, params=(st.session_state.user_id,))
+        st.markdown("### Sub-Hierarchy Nodes")
         st.dataframe(sub_users, use_container_width=True)
-        ret_list = pd.read_sql_query("SELECT id, store_name, owner_name, phone, store_type FROM retailers;", conn)
+        
+        ret_list = pd.read_sql_query("SELECT id, store_name, owner_name, subscription_status, payment_status, store_type FROM retailers WHERE assigned_sse_id = ?;", conn, params=(st.session_state.user_id,))
+        st.markdown("### Assigned Retailers")
         st.dataframe(ret_list, use_container_width=True)
+        
     with tab2:
         with st.form("add_sub_node"):
-            n_role = st.selectbox("Select Node Type", ["STATE_HEAD", "DISTRICT_HEAD", "SSE", "RETAILER"])
+            current_rank = ROLE_RANKS.get(st.session_state.role, 0)
+            available_roles = [r for r, rank in ROLE_RANKS.items() if rank < current_rank]
+            
+            n_role = st.selectbox("Select Node Type", available_roles)
             n_name = st.text_input("Name / Store Name")
             n_email = st.text_input("Email")
             n_phone = st.text_input("Phone")
@@ -136,13 +211,89 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "DISTRICT_HEAD", "S
             n_pass = st.text_input("Password", type="password")
             if st.form_submit_button("Create Node"):
                 c = conn.cursor()
-                if n_role == "RETAILER":
-                    c.execute("INSERT INTO retailers (assigned_sse_id, store_name, owner_name, email, phone, username, password_hash, store_type) VALUES (?, ?, ?, ?, ?, ?, ?, 'SINGLE');", (st.session_state.user_id, n_name, n_name, n_email, n_phone, n_user, hash_password(n_pass)))
-                else:
-                    c.execute("INSERT INTO hierarchy_users (parent_id, role, name, email, phone, username, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, n_role, n_name, n_email, n_phone, n_user, hash_password(n_pass)))
-                conn.commit()
-                st.success("Successfully created!")
-                st.rerun()
+                try:
+                    if n_role == "RETAILER":
+                        c.execute("INSERT INTO retailers (assigned_sse_id, store_name, owner_name, email, phone, username, password_hash, store_type, subscription_status, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?, 'SINGLE', 'TRIAL', 'ACTIVE');", (st.session_state.user_id, n_name, n_name, n_email, n_phone, n_user, hash_password(n_pass)))
+                    else:
+                        c.execute("INSERT INTO hierarchy_users (parent_id, role, name, email, phone, username, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, n_role, n_name, n_email, n_phone, n_user, hash_password(n_pass)))
+                    conn.commit()
+                    st.success("Successfully created!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    
+    with tab3:
+        st.subheader("Edit or Delete Downline Users / Retailers")
+        downline_nodes = pd.read_sql_query("SELECT id, role, name, username FROM hierarchy_users WHERE parent_id = ?;", conn, params=(st.session_state.user_id,))
+        downline_rets = pd.read_sql_query("SELECT id, store_name as name, 'RETAILER' as role, username, subscription_status, payment_status FROM retailers WHERE assigned_sse_id = ?;", conn, params=(st.session_state.user_id,))
+        
+        combined_downline = pd.concat([downline_nodes, downline_rets], ignore_index=True)
+        
+        if not combined_downline.empty:
+            sel_id = st.selectbox("Select Downline Member", combined_downline['id'], format_func=lambda x: f"{combined_downline[combined_downline['id']==x]['name'].values[0]} ({combined_downline[combined_downline['id']==x]['role'].values[0]})")
+            selected_member = combined_downline[combined_downline['id'] == sel_id].iloc[0]
+            m_role = selected_member['role']
+            
+            with st.form("edit_downline_form"):
+                e_name = st.text_input("Name / Store Name", value=selected_member['name'])
+                e_pass = st.text_input("New Password (leave blank to keep unchanged)", type="password")
+                col1, col2 = st.columns(2)
+                up_btn = col1.form_submit_button("Update Member")
+                del_btn = col2.form_submit_button("Delete Member", type="primary")
+                
+                c = conn.cursor()
+                if up_btn:
+                    if m_role == "RETAILER":
+                        if e_pass:
+                            c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ?;", (e_name, hash_password(e_pass), int(sel_id)))
+                        else:
+                            c.execute("UPDATE retailers SET store_name = ? WHERE id = ?;", (e_name, int(sel_id)))
+                    else:
+                        if e_pass:
+                            c.execute("UPDATE hierarchy_users SET name = ?, password_hash = ? WHERE id = ?;", (e_name, hash_password(e_pass), int(sel_id)))
+                        else:
+                            c.execute("UPDATE hierarchy_users SET name = ? WHERE id = ?;", (e_name, int(sel_id)))
+                    conn.commit()
+                    st.success("Member updated successfully!")
+                    st.rerun()
+                elif del_btn:
+                    if m_role == "RETAILER":
+                        sub_stat = selected_member.get('subscription_status', 'ACTIVE')
+                        pay_stat = selected_member.get('payment_status', 'ACTIVE')
+                        # Retailer can only be deleted if trial period or payment finished/expired
+                        if sub_stat == 'TRIAL' or pay_stat == 'EXPIRED':
+                            c.execute("DELETE FROM retailers WHERE id = ?;", (int(sel_id),))
+                            conn.commit()
+                            st.success("Retailer deleted successfully!")
+                            st.rerun()
+                        else:
+                            st.error("Cannot delete! Retailer is currently in active paid subscription period.")
+                    else:
+                        c.execute("DELETE FROM hierarchy_users WHERE id = ?;", (int(sel_id),))
+                        conn.commit()
+                        st.success("Node deleted successfully!")
+                        st.rerun()
+        else:
+            st.info("No downline members found under your account.")
+
+    with tab4:
+        st.subheader("Transfer Retailer to Another SSE")
+        # Zonal manager and upper can transfer retailers under their supervision
+        rets_mgr = pd.read_sql_query("SELECT id, store_name FROM retailers;", conn)
+        sses_mgr = pd.read_sql_query("SELECT id, name FROM hierarchy_users WHERE role = 'SSE';", conn)
+        
+        if not rets_mgr.empty and not sses_mgr.empty:
+            with st.form("transfer_ret_mgr"):
+                r_sel = st.selectbox("Select Retailer", rets_mgr['id'], format_func=lambda x: rets_mgr[rets_mgr['id']==x]['store_name'].values[0])
+                s_sel = st.selectbox("Select Target SSE", sses_mgr['id'], format_func=lambda x: sses_mgr[sses_mgr['id']==x]['name'].values[0])
+                if st.form_submit_button("Transfer Retailer"):
+                    c = conn.cursor()
+                    c.execute("UPDATE retailers SET assigned_sse_id = ? WHERE id = ?;", (int(s_sel), int(r_sel)))
+                    conn.commit()
+                    st.success("Retailer transferred successfully!")
+                    st.rerun()
+        else:
+            st.warning("No retailers or SSEs available for transfer.")
     conn.close()
 
 elif st.session_state.role == "RETAILER":
