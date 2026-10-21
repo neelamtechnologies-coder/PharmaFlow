@@ -7,7 +7,7 @@ init_db()
 setup_local_environment()
 
 if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+    st.session_state.authenticated = Falsez
     st.session_state.username = ""
     st.session_state.role = ""
     st.session_state.user_id = None
