@@ -70,10 +70,12 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
+
 shortcut_content = f"""[InternetShortcut]
-URL=https://share.streamlit.io
+URL=https://techpharma-solutions.streamlit.app
 IconIndex=0
 """
+
 st.sidebar.download_button(
     label="📥 Download Desktop Icon",
     data=shortcut_content,
