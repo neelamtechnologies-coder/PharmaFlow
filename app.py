@@ -71,11 +71,11 @@ st.sidebar.info(f"Role: {st.session_state.role}")
 st.sidebar.markdown("---")
 st.sidebar.subheader("🖥 Quick Actions")
 
-# Direct .url shortcut pointing to the local medical icon file automatically
+# Using a robust Windows built-in system icon index that renders cleanly without blank pages
 shortcut_content = f"""[InternetShortcut]
 URL=https://techpharma-solutions.streamlit.app
-IconFile=C:\\PharmaFlow_Data\\icon.ico
-IconIndex=0
+IconFile=C:\\Windows\\System32\\shell32.dll
+IconIndex=13
 """
 
 st.sidebar.download_button(
@@ -83,7 +83,7 @@ st.sidebar.download_button(
     data=shortcut_content,
     file_name="TechPharma Solutions.url",
     mime="text/plain",
-    help="Click to download direct desktop shortcut with custom medical branding!"
+    help="Click to download shortcut directly to your Desktop!"
 )
 
 if st.sidebar.button("Logout"):
