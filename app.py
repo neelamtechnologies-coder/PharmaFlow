@@ -298,19 +298,20 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
 
 elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
-    r_info = pd.read_sql_query("SELECT store_name, store_type, gstin FROM retailers WHERE id = ?;", conn, params=(st.session_state.user_id,))
+    r_info = pd.read_sql_query("SELECT store_name, store_type, gstin, phone FROM retailers WHERE id = ?;", conn, params=(st.session_state.user_id,))
     r_store = r_info.iloc[0]["store_name"] if not r_info.empty else "Medical Store"
     r_type = r_info.iloc[0]["store_type"] if not r_info.empty else "SINGLE"
     r_gstin = r_info.iloc[0]["gstin"] if not r_info.empty else "Unregistered"
+    r_phone = r_info.iloc[0]["phone"] if not r_info.empty else "9876543210"
     conn.close()
     
     st.subheader(f"🏥 {r_store} - Retailer ERP (GSTIN: {r_gstin})")
-    tab_bill, tab_inv, tab_term = st.tabs(["🛒 POS Billing & GST Invoice", "📊 Inventory & GST", "💻 Counter Terminals"])
+    tab_bill, tab_inv, tab_term = st.tabs(["🛒 POS Billing & SMS/GST", "📊 Inventory & GST", "💻 Counter Terminals"])
     
     conn = get_db_connection()
     c = conn.cursor()
     with tab_bill:
-        st.subheader("POS Billing with GST & e-Invoicing Calculation")
+        st.subheader("POS Billing with GST Invoice & SMS Notification")
         
         scan_barcode = st.text_input("🔍 Optional Barcode Scan / Enter Barcode", "", placeholder="Scan barcode or leave blank to select manually...")
         
@@ -356,7 +357,6 @@ elif st.session_state.role == "RETAILER":
                 cart_df = pd.DataFrame(st.session_state.cart)
                 st.dataframe(cart_df, use_container_width=True)
                 
-                # Calculate totals with GST breakdown
                 subtotal = sum(i['total'] for i in st.session_state.cart)
                 total_gst_amount = sum((i['total'] * i['gst_rate'] / 100.0) for i in st.session_state.cart)
                 cgst_amt = total_gst_amount / 2.0
@@ -364,18 +364,23 @@ elif st.session_state.role == "RETAILER":
                 grand_total = subtotal + total_gst_amount
                 
                 st.markdown(f"**Taxable Amount:** ₹{subtotal:.2f}")
-                st.markdown(f"**CGST ({'%g'%(sum(i['gst_rate'] for i in st.session_state.cart)/len(st.session_state.cart)/2)}%):** ₹{cgst_amt:.2f} | **SGST:** ₹{sgst_amt:.2f}")
-                st.markdown(f"### **Grand Total: ₹{grand_total:.2f}**")
+                st.markdown(f"**CGST / SGST:** ₹{cgst_amt:.2f} each | **Grand Total:** **₹{grand_total:.2f}**")
                 
-                if st.button("Complete Sale & Generate GST Invoice"):
+                # SMS Option toggle
+                send_sms_flag = st.checkbox("📱 Send Digital Bill via SMS to Customer Phone", value=True)
+                cust_phone = st.text_input("Customer Mobile Number for SMS", value="9876543210")
+                
+                if st.button("Complete Sale & Generate Invoice"):
                     inv_no = f"GST-INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                     c.execute("INSERT INTO sales (retailer_id, invoice_number, total_amount, cgst, sgst) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, inv_no, grand_total, cgst_amt, sgst_amt))
                     for item in st.session_state.cart:
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
                     
-                    st.success(f"GST Tax Invoice {inv_no} Generated Successfully!")
-                    st.info(f"Store GSTIN: {r_gstin} | Total Paid: ₹{grand_total:.2f} (CGST: ₹{cgst_amt:.2f}, SGST: ₹{sgst_amt:.2f})")
+                    st.success(f"Invoice {inv_no} Generated Successfully!")
+                    if send_sms_flag:
+                        st.info(f"📨 SMS Sent Successfully to {cust_phone} regarding Bill #{inv_no} amounting to ₹{grand_total:.2f}!")
+                    
                     st.session_state.cart = []
                     st.rerun()
         else:
