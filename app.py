@@ -305,7 +305,7 @@ elif st.session_state.role == "RETAILER":
     conn.close()
     
     st.subheader(f"🏥 {r_store} - Retailer ERP (GSTIN: {r_gstin})")
-    tab_bill, tab_inv, tab_supp, tab_h1, tab_term = st.tabs(["🛒 POS Billing", "📊 Inventory & GST", "📦 Supplier & PO", "📖 Schedule H1 Register", "💻 Terminals"])
+    tab_bill, tab_inv, tab_supp, tab_h1, tab_term = st.tabs(["🛒 POS Billing", "📊 Inventory & GST", "📦 Supplier Ledger & Accounts", "📖 Schedule H1 Register", "💻 Terminals"])
     
     conn = get_db_connection()
     c = conn.cursor()
@@ -403,9 +403,9 @@ elif st.session_state.role == "RETAILER":
         st.dataframe(inv_df, use_container_width=True)
 
     with tab_supp:
-        st.subheader("📦 Supplier Ledger & Purchase Order Automation")
+        st.subheader("📦 Supplier Ledger & Accounts / Purchase Orders")
         
-        supp_tab1, supp_tab2, supp_tab3 = st.tabs(["📋 Suppliers Directory", "➕ Add Supplier / Khata", "🛒 Generate Purchase Order (PO)"])
+        supp_tab1, supp_tab2, supp_tab3 = st.tabs(["📋 Suppliers Directory", "➕ Add Supplier / Account", "🛒 Generate Purchase Order (PO)"])
         
         with supp_tab1:
             supp_df = pd.read_sql_query("SELECT id, supplier_name, contact_person, phone, gstin, outstanding_balance FROM suppliers WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
@@ -423,17 +423,17 @@ elif st.session_state.role == "RETAILER":
                 
         with supp_tab2:
             with st.form("add_supplier_form"):
-                st.markdown("### Add New Distributor / Supplier")
+                st.markdown("### Add New Distributor / Supplier Account")
                 s_name = st.text_input("Supplier / Agency Name")
                 s_contact = st.text_input("Contact Person Name")
                 s_phone = st.text_input("Phone Number")
                 s_gstin = st.text_input("Supplier GSTIN", value="27SUPPLIER0001Z5")
                 s_bal = st.number_input("Initial Outstanding Balance (₹)", min_value=0.0, value=0.0)
                 
-                if st.form_submit_button("Save Supplier"):
+                if st.form_submit_button("Save Supplier Account"):
                     c.execute("INSERT INTO suppliers (retailer_id, supplier_name, contact_person, phone, gstin, outstanding_balance) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, s_name, s_contact, s_phone, s_gstin, s_bal))
                     conn.commit()
-                    st.success("Supplier added successfully to Ledger!")
+                    st.success("Supplier account added successfully to Ledger!")
                     st.rerun()
                     
         with supp_tab3:
