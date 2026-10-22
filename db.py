@@ -77,7 +77,8 @@ def init_db():
             name TEXT NOT NULL, 
             batch TEXT, 
             quantity INTEGER, 
-            price REAL DEFAULT 0.0
+            price REAL DEFAULT 0.0,
+            barcode TEXT DEFAULT ''
         );""")
         
         c.execute("""CREATE TABLE IF NOT EXISTS sales (
