@@ -110,8 +110,8 @@ if st.session_state.role == "SUPER_ADMIN":
         else:
             st.info("No hierarchy nodes created yet.")
         
-        all_rets = pd.read_sql_query("SELECT id, assigned_sse_id, store_name, owner_name, subscription_status, payment_status FROM retailers;", conn)
-        st.markdown("### All Retailers")
+        all_rets = pd.read_sql_query("SELECT id, assigned_sse_id, store_name, owner_name, gstin, subscription_status, payment_status FROM retailers;", conn)
+        st.markdown("### All Retailers (with GSTIN)")
         if not all_rets.empty:
             st.dataframe(all_rets, use_container_width=True)
         else:
@@ -194,7 +194,7 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
         st.markdown("### Sub-Hierarchy Nodes")
         st.dataframe(sub_users, use_container_width=True)
         
-        ret_list = pd.read_sql_query("SELECT id, store_name, owner_name, subscription_status, payment_status, store_type FROM retailers WHERE assigned_sse_id = ?;", conn, params=(st.session_state.user_id,))
+        ret_list = pd.read_sql_query("SELECT id, store_name, owner_name, gstin, subscription_status, payment_status, store_type FROM retailers WHERE assigned_sse_id = ?;", conn, params=(st.session_state.user_id,))
         st.markdown("### Assigned Retailers")
         st.dataframe(ret_list, use_container_width=True)
         
@@ -209,11 +209,12 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
             n_phone = st.text_input("Phone")
             n_user = st.text_input("Username")
             n_pass = st.text_input("Password", type="password")
+            n_gstin = st.text_input("GSTIN Number (if Retailer)", value="27AAAAA0000A1Z5")
             if st.form_submit_button("Create Node"):
                 c = conn.cursor()
                 try:
                     if n_role == "RETAILER":
-                        c.execute("INSERT INTO retailers (assigned_sse_id, store_name, owner_name, email, phone, username, password_hash, store_type, subscription_status, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?, 'SINGLE', 'TRIAL', 'ACTIVE');", (st.session_state.user_id, n_name, n_name, n_email, n_phone, n_user, hash_password(n_pass)))
+                        c.execute("INSERT INTO retailers (assigned_sse_id, store_name, owner_name, email, phone, username, password_hash, store_type, subscription_status, payment_status, gstin) VALUES (?, ?, ?, ?, ?, ?, ?, 'SINGLE', 'TRIAL', 'ACTIVE', ?);", (st.session_state.user_id, n_name, n_name, n_email, n_phone, n_user, hash_password(n_pass), n_gstin))
                     else:
                         c.execute("INSERT INTO hierarchy_users (parent_id, role, name, email, phone, username, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, n_role, n_name, n_email, n_phone, n_user, hash_password(n_pass)))
                     conn.commit()
@@ -225,7 +226,7 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
     with tab3:
         st.subheader("Edit or Delete Downline Users / Retailers")
         downline_nodes = pd.read_sql_query("SELECT id, role, name, username FROM hierarchy_users WHERE parent_id = ?;", conn, params=(st.session_state.user_id,))
-        downline_rets = pd.read_sql_query("SELECT id, store_name as name, 'RETAILER' as role, username, subscription_status, payment_status FROM retailers WHERE assigned_sse_id = ?;", conn, params=(st.session_state.user_id,))
+        downline_rets = pd.read_sql_query("SELECT id, store_name as name, 'RETAILER' as role, username, subscription_status, payment_status, gstin FROM retailers WHERE assigned_sse_id = ?;", conn, params=(st.session_state.user_id,))
         
         combined_downline = pd.concat([downline_nodes, downline_rets], ignore_index=True)
         
@@ -236,6 +237,7 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
             
             with st.form("edit_downline_form"):
                 e_name = st.text_input("Name / Store Name", value=selected_member['name'])
+                e_gstin = st.text_input("GSTIN", value=selected_member.get('gstin', '') if m_role == 'RETAILER' else '')
                 e_pass = st.text_input("New Password (leave blank to keep unchanged)", type="password")
                 col1, col2 = st.columns(2)
                 up_btn = col1.form_submit_button("Update Member")
@@ -245,9 +247,9 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
                 if up_btn:
                     if m_role == "RETAILER":
                         if e_pass:
-                            c.execute("UPDATE retailers SET store_name = ?, password_hash = ? WHERE id = ?;", (e_name, hash_password(e_pass), int(sel_id)))
+                            c.execute("UPDATE retailers SET store_name = ?, gstin = ?, password_hash = ? WHERE id = ?;", (e_name, e_gstin, hash_password(e_pass), int(sel_id)))
                         else:
-                            c.execute("UPDATE retailers SET store_name = ? WHERE id = ?;", (e_name, int(sel_id)))
+                            c.execute("UPDATE retailers SET store_name = ?, gstin = ? WHERE id = ?;", (e_name, e_gstin, int(sel_id)))
                     else:
                         if e_pass:
                             c.execute("UPDATE hierarchy_users SET name = ?, password_hash = ? WHERE id = ?;", (e_name, hash_password(e_pass), int(sel_id)))
@@ -296,23 +298,23 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
 
 elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
-    r_info = pd.read_sql_query("SELECT store_name, store_type FROM retailers WHERE id = ?;", conn, params=(st.session_state.user_id,))
+    r_info = pd.read_sql_query("SELECT store_name, store_type, gstin FROM retailers WHERE id = ?;", conn, params=(st.session_state.user_id,))
     r_store = r_info.iloc[0]["store_name"] if not r_info.empty else "Medical Store"
     r_type = r_info.iloc[0]["store_type"] if not r_info.empty else "SINGLE"
+    r_gstin = r_info.iloc[0]["gstin"] if not r_info.empty else "Unregistered"
     conn.close()
     
-    st.subheader(f"🏥 {r_store} - Retailer ERP")
-    tab_bill, tab_inv, tab_term = st.tabs(["🛒 POS Billing", "📊 Inventory", "💻 Counter Terminals"])
+    st.subheader(f"🏥 {r_store} - Retailer ERP (GSTIN: {r_gstin})")
+    tab_bill, tab_inv, tab_term = st.tabs(["🛒 POS Billing & GST Invoice", "📊 Inventory & GST", "💻 Counter Terminals"])
     
     conn = get_db_connection()
     c = conn.cursor()
     with tab_bill:
-        st.subheader("Billing Counter (Optional Barcode Support)")
+        st.subheader("POS Billing with GST & e-Invoicing Calculation")
         
-        # Optional Barcode Input
         scan_barcode = st.text_input("🔍 Optional Barcode Scan / Enter Barcode", "", placeholder="Scan barcode or leave blank to select manually...")
         
-        df_active = pd.read_sql_query("SELECT name, batch, quantity, price, barcode FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
+        df_active = pd.read_sql_query("SELECT name, batch, quantity, price, barcode, gst_rate FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
         
         if not df_active.empty:
             matched_row = None
@@ -334,45 +336,70 @@ elif st.session_state.role == "RETAILER":
             qty = st.number_input("Quantity", min_value=1, max_value=int(med_row['quantity']), value=1)
             
             if st.button("Add to Cart"):
-                st.session_state.cart.append({"name": sel_item, "batch": med_row['batch'], "price": med_row['price'], "qty": qty, "total": med_row['price']*qty})
-                st.success("Added to cart!")
+                item_price = float(med_row['price'])
+                gst_pct = float(med_row['gst_rate'])
+                line_total = item_price * qty
+                
+                st.session_state.cart.append({
+                    "name": sel_item, 
+                    "batch": med_row['batch'], 
+                    "price": item_price, 
+                    "qty": qty, 
+                    "gst_rate": gst_pct,
+                    "total": line_total
+                })
+                st.success("Added to cart with GST calculation!")
                 st.rerun()
                 
             if st.session_state.cart:
-                st.markdown("### Current Bill Cart")
-                st.dataframe(pd.DataFrame(st.session_state.cart), use_container_width=True)
-                if st.button("Complete Sale"):
-                    g_tot = sum(i['total'] for i in st.session_state.cart)
-                    inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    c.execute("INSERT INTO sales (retailer_id, invoice_number, total_amount) VALUES (?, ?, ?);", (st.session_state.user_id, inv_no, g_tot))
+                st.markdown("### Current GST Bill Cart")
+                cart_df = pd.DataFrame(st.session_state.cart)
+                st.dataframe(cart_df, use_container_width=True)
+                
+                # Calculate totals with GST breakdown
+                subtotal = sum(i['total'] for i in st.session_state.cart)
+                total_gst_amount = sum((i['total'] * i['gst_rate'] / 100.0) for i in st.session_state.cart)
+                cgst_amt = total_gst_amount / 2.0
+                sgst_amt = total_gst_amount / 2.0
+                grand_total = subtotal + total_gst_amount
+                
+                st.markdown(f"**Taxable Amount:** ₹{subtotal:.2f}")
+                st.markdown(f"**CGST ({'%g'%(sum(i['gst_rate'] for i in st.session_state.cart)/len(st.session_state.cart)/2)}%):** ₹{cgst_amt:.2f} | **SGST:** ₹{sgst_amt:.2f}")
+                st.markdown(f"### **Grand Total: ₹{grand_total:.2f}**")
+                
+                if st.button("Complete Sale & Generate GST Invoice"):
+                    inv_no = f"GST-INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    c.execute("INSERT INTO sales (retailer_id, invoice_number, total_amount, cgst, sgst) VALUES (?, ?, ?, ?, ?);", (st.session_state.user_id, inv_no, grand_total, cgst_amt, sgst_amt))
                     for item in st.session_state.cart:
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
+                    
+                    st.success(f"GST Tax Invoice {inv_no} Generated Successfully!")
+                    st.info(f"Store GSTIN: {r_gstin} | Total Paid: ₹{grand_total:.2f} (CGST: ₹{cgst_amt:.2f}, SGST: ₹{sgst_amt:.2f})")
                     st.session_state.cart = []
-                    st.success(f"Invoice {inv_no} generated successfully under TechPharma Solutions!")
                     st.rerun()
         else:
             st.info("No active stock available in inventory for billing.")
 
     with tab_inv:
-        st.subheader("Inventory Stock & Barcode Management")
+        st.subheader("Inventory Stock & GST Management")
         
-        # Add inventory with optional barcode
         with st.form("add_inv_form"):
-            st.markdown("### Add New Stock / Medicine")
+            st.markdown("### Add New Stock with GST Rate")
             i_name = st.text_input("Medicine Name")
             i_batch = st.text_input("Batch Number")
             i_qty = st.number_input("Quantity", min_value=1, value=10)
-            i_price = st.number_input("Price per Unit", min_value=0.0, value=10.0)
-            i_barcode = st.text_input("Optional Barcode (Scan here while adding)", placeholder="e.g. 890123456789")
+            i_price = st.number_input("Price per Unit (₹)", min_value=0.0, value=10.0)
+            i_gst = st.selectbox("GST Rate (%)", [0.0, 5.0, 12.0, 18.0, 28.0], index=2)
+            i_barcode = st.text_input("Optional Barcode", placeholder="e.g. 890123456789")
             
-            if st.form_submit_button("Add Stock"):
-                c.execute("INSERT INTO inventory (retailer_id, name, batch, quantity, price, barcode) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, i_name, i_batch, i_qty, i_price, i_barcode))
+            if st.form_submit_button("Add Stock with GST"):
+                c.execute("INSERT INTO inventory (retailer_id, name, batch, quantity, price, barcode, gst_rate) VALUES (?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, i_name, i_batch, i_qty, i_price, i_barcode, i_gst))
                 conn.commit()
-                st.success("Stock added successfully!")
+                st.success("Stock added with GST configuration successfully!")
                 st.rerun()
                 
-        inv_df = pd.read_sql_query("SELECT name, batch, quantity, price, barcode FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        inv_df = pd.read_sql_query("SELECT name, batch, quantity, price, gst_rate, barcode FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
         st.markdown("### Current Inventory List")
         st.dataframe(inv_df, use_container_width=True)
 
