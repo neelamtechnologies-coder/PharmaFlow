@@ -305,7 +305,7 @@ elif st.session_state.role == "RETAILER":
     conn.close()
     
     st.subheader(f"🏥 {r_store} - Retailer ERP (GSTIN: {r_gstin})")
-    tab_bill, tab_inv, tab_term = st.tabs(["🛒 POS Billing & GST", "📊 Inventory & GST", "💻 Counter Terminals"])
+    tab_bill, tab_inv, tab_supp, tab_term = st.tabs(["🛒 POS Billing & GST", "📊 Inventory & GST", "📦 Supplier Ledger & PO", "💻 Counter Terminals"])
     
     conn = get_db_connection()
     c = conn.cursor()
@@ -401,6 +401,58 @@ elif st.session_state.role == "RETAILER":
         inv_df = pd.read_sql_query("SELECT name, batch, quantity, price, gst_rate, barcode FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
         st.markdown("### Current Inventory List")
         st.dataframe(inv_df, use_container_width=True)
+
+    with tab_supp:
+        st.subheader("📦 Supplier Ledger & Purchase Order Automation")
+        
+        supp_tab1, supp_tab2, supp_tab3 = st.tabs(["📋 Suppliers Directory", "➕ Add Supplier / Khata", "🛒 Generate Purchase Order (PO)"])
+        
+        with supp_tab1:
+            supp_df = pd.read_sql_query("SELECT id, supplier_name, contact_person, phone, gstin, outstanding_balance FROM suppliers WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not supp_df.empty:
+                st.dataframe(supp_df, use_container_width=True)
+            else:
+                st.info("No suppliers added yet.")
+                
+            st.markdown("### Recent Purchase Orders")
+            po_df = pd.read_sql_query("SELECT po_number, items_summary, total_amount, status, created_at FROM purchase_orders WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not po_df.empty:
+                st.dataframe(po_df, use_container_width=True)
+            else:
+                st.info("No purchase orders generated yet.")
+                
+        with supp_tab2:
+            with st.form("add_supplier_form"):
+                st.markdown("### Add New Distributor / Supplier")
+                s_name = st.text_input("Supplier / Agency Name")
+                s_contact = st.text_input("Contact Person Name")
+                s_phone = st.text_input("Phone Number")
+                s_gstin = st.text_input("Supplier GSTIN", value="27SUPPLIER0001Z5")
+                s_bal = st.number_input("Initial Outstanding Balance (₹)", min_value=0.0, value=0.0)
+                
+                if st.form_submit_button("Save Supplier"):
+                    c.execute("INSERT INTO suppliers (retailer_id, supplier_name, contact_person, phone, gstin, outstanding_balance) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, s_name, s_contact, s_phone, s_gstin, s_bal))
+                    conn.commit()
+                    st.success("Supplier added successfully to Ledger!")
+                    st.rerun()
+                    
+        with supp_tab3:
+            supp_list = pd.read_sql_query("SELECT id, supplier_name FROM suppliers WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not supp_list.empty:
+                with st.form("po_form"):
+                    st.markdown("### Create Automated Purchase Order")
+                    po_supp = st.selectbox("Select Supplier", supp_list['id'], format_func=lambda x: supp_list[supp_list['id']==x]['supplier_name'].values[0])
+                    po_items = st.text_area("Items Required (e.g. Paracetamol 500tabs, Pantoprazole 200tabs)")
+                    po_amt = st.number_input("Estimated PO Amount (₹)", min_value=0.0, value=1000.0)
+                    
+                    if st.form_submit_button("Generate Purchase Order"):
+                        po_no = f"PO-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                        c.execute("INSERT INTO purchase_orders (retailer_id, supplier_id, po_number, items_summary, total_amount, status) VALUES (?, ?, ?, ?, ?, 'PENDING');", (st.session_state.user_id, int(po_supp), po_no, po_items, po_amt))
+                        conn.commit()
+                        st.success(f"Purchase Order {po_no} Generated Successfully for Supplier!")
+                        st.rerun()
+            else:
+                st.warning("Please add at least one supplier first to generate a Purchase Order.")
 
     with tab_term:
         if r_type == "ENTERPRISE":
