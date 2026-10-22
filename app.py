@@ -305,7 +305,7 @@ elif st.session_state.role == "RETAILER":
     conn.close()
     
     st.subheader(f"🏥 {r_store} - Retailer ERP (GSTIN: {r_gstin})")
-    tab_bill, tab_inv, tab_supp, tab_term = st.tabs(["🛒 POS Billing & GST", "📊 Inventory & GST", "📦 Supplier Ledger & PO", "💻 Counter Terminals"])
+    tab_bill, tab_inv, tab_supp, tab_h1, tab_term = st.tabs(["🛒 POS Billing", "📊 Inventory & GST", "📦 Supplier & PO", "📖 Schedule H1 Register", "💻 Terminals"])
     
     conn = get_db_connection()
     c = conn.cursor()
@@ -453,6 +453,35 @@ elif st.session_state.role == "RETAILER":
                         st.rerun()
             else:
                 st.warning("Please add at least one supplier first to generate a Purchase Order.")
+
+    with tab_h1:
+        st.subheader("📖 Schedule H1 Drug Compliance Register")
+        
+        h1_tab1, h1_tab2 = st.tabs(["📜 View H1 Register", "➕ Add H1 Prescription Entry"])
+        
+        with h1_tab1:
+            h1_df = pd.read_sql_query("SELECT patient_name, patient_address, doctor_name, doctor_qualification, medicine_name, quantity, prescription_date, created_at FROM schedule_h1_register WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+            if not h1_df.empty:
+                st.dataframe(h1_df, use_container_width=True)
+            else:
+                st.info("No Schedule H1 entries recorded yet.")
+                
+        with h1_tab2:
+            with st.form("h1_form"):
+                st.markdown("### Record Schedule H1 Sale (Prescription Mandatory)")
+                p_name = st.text_input("Patient Name")
+                p_addr = st.text_input("Patient Address")
+                doc_name = st.text_input("Prescribing Doctor Name")
+                doc_qual = st.text_input("Doctor Qualification (e.g. MBBS, MD)")
+                med_h1 = st.text_input("H1 Medicine Name & Batch")
+                h1_qty = st.number_input("Quantity Sold", min_value=1, value=10)
+                p_date = st.date_input("Prescription Date", value=datetime.now())
+                
+                if st.form_submit_button("Save H1 Register Entry"):
+                    c.execute("INSERT INTO schedule_h1_register (retailer_id, patient_name, patient_address, doctor_name, doctor_qualification, medicine_name, quantity, prescription_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?);", (st.session_state.user_id, p_name, p_addr, doc_name, doc_qual, med_h1, int(h1_qty), str(p_date)))
+                    conn.commit()
+                    st.success("Schedule H1 entry recorded successfully for government audit compliance!")
+                    st.rerun()
 
     with tab_term:
         if r_type == "ENTERPRISE":
