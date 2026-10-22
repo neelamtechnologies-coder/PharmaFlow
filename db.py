@@ -60,7 +60,8 @@ def init_db():
             subscription_status TEXT DEFAULT 'TRIAL', 
             plan_expiry_date TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes', '+30 days')), 
             payment_status TEXT DEFAULT 'ACTIVE',
-            gstin TEXT DEFAULT '27AAAAA0000A1Z5'
+            gstin TEXT DEFAULT '27AAAAA0000A1Z5',
+            sms_gateway_token TEXT DEFAULT ''
         );""")
         
         c.execute("""CREATE TABLE IF NOT EXISTS store_terminals (
