@@ -260,7 +260,6 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
                     if m_role == "RETAILER":
                         sub_stat = selected_member.get('subscription_status', 'ACTIVE')
                         pay_stat = selected_member.get('payment_status', 'ACTIVE')
-                        # Retailer can only be deleted if trial period or payment finished/expired
                         if sub_stat == 'TRIAL' or pay_stat == 'EXPIRED':
                             c.execute("DELETE FROM retailers WHERE id = ?;", (int(sel_id),))
                             conn.commit()
@@ -278,7 +277,6 @@ elif st.session_state.role in ["COUNTRY_HEAD", "STATE_HEAD", "ZONAL_MANAGER", "S
 
     with tab4:
         st.subheader("Transfer Retailer to Another SSE")
-        # Zonal manager and upper can transfer retailers under their supervision
         rets_mgr = pd.read_sql_query("SELECT id, store_name FROM retailers;", conn)
         sses_mgr = pd.read_sql_query("SELECT id, name FROM hierarchy_users WHERE role = 'SSE';", conn)
         
@@ -309,18 +307,40 @@ elif st.session_state.role == "RETAILER":
     conn = get_db_connection()
     c = conn.cursor()
     with tab_bill:
-        st.subheader("Billing Counter")
-        df_active = pd.read_sql_query("SELECT name, batch, quantity, price FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
+        st.subheader("Billing Counter (Optional Barcode Support)")
+        
+        # Optional Barcode Input
+        scan_barcode = st.text_input("🔍 Optional Barcode Scan / Enter Barcode", "", placeholder="Scan barcode or leave blank to select manually...")
+        
+        df_active = pd.read_sql_query("SELECT name, batch, quantity, price, barcode FROM inventory WHERE retailer_id = ? AND quantity > 0;", conn, params=(st.session_state.user_id,))
+        
         if not df_active.empty:
-            sel_item = st.selectbox("Select Medicine", df_active['name'].unique())
-            med_row = df_active[df_active['name'] == sel_item].iloc[0]
+            matched_row = None
+            if scan_barcode.strip():
+                match_df = df_active[df_active['barcode'] == scan_barcode.strip()]
+                if not match_df.empty:
+                    matched_row = match_df.iloc[0]
+                    st.success(f"Scanned Item Matched: {matched_row['name']} (Batch: {matched_row['batch']})")
+                else:
+                    st.warning("No medicine found with this barcode. Please select manually below.")
+            
+            if matched_row is not None:
+                sel_item = matched_row['name']
+                med_row = matched_row
+            else:
+                sel_item = st.selectbox("Select Medicine Manually", df_active['name'].unique())
+                med_row = df_active[df_active['name'] == sel_item].iloc[0]
+                
             qty = st.number_input("Quantity", min_value=1, max_value=int(med_row['quantity']), value=1)
+            
             if st.button("Add to Cart"):
                 st.session_state.cart.append({"name": sel_item, "batch": med_row['batch'], "price": med_row['price'], "qty": qty, "total": med_row['price']*qty})
-                st.success("Added!")
+                st.success("Added to cart!")
                 st.rerun()
+                
             if st.session_state.cart:
-                st.dataframe(pd.DataFrame(st.session_state.cart))
+                st.markdown("### Current Bill Cart")
+                st.dataframe(pd.DataFrame(st.session_state.cart), use_container_width=True)
                 if st.button("Complete Sale"):
                     g_tot = sum(i['total'] for i in st.session_state.cart)
                     inv_no = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -329,12 +349,31 @@ elif st.session_state.role == "RETAILER":
                         c.execute("UPDATE inventory SET quantity = quantity - ? WHERE retailer_id = ? AND batch = ?;", (item['qty'], st.session_state.user_id, item['batch']))
                     conn.commit()
                     st.session_state.cart = []
-                    st.success(f"Invoice {inv_no} generated under TechPharma Solutions!")
+                    st.success(f"Invoice {inv_no} generated successfully under TechPharma Solutions!")
                     st.rerun()
+        else:
+            st.info("No active stock available in inventory for billing.")
 
     with tab_inv:
-        st.subheader("Inventory Stock")
-        inv_df = pd.read_sql_query("SELECT name, batch, quantity, price FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        st.subheader("Inventory Stock & Barcode Management")
+        
+        # Add inventory with optional barcode
+        with st.form("add_inv_form"):
+            st.markdown("### Add New Stock / Medicine")
+            i_name = st.text_input("Medicine Name")
+            i_batch = st.text_input("Batch Number")
+            i_qty = st.number_input("Quantity", min_value=1, value=10)
+            i_price = st.number_input("Price per Unit", min_value=0.0, value=10.0)
+            i_barcode = st.text_input("Optional Barcode (Scan here while adding)", placeholder="e.g. 890123456789")
+            
+            if st.form_submit_button("Add Stock"):
+                c.execute("INSERT INTO inventory (retailer_id, name, batch, quantity, price, barcode) VALUES (?, ?, ?, ?, ?, ?);", (st.session_state.user_id, i_name, i_batch, i_qty, i_price, i_barcode))
+                conn.commit()
+                st.success("Stock added successfully!")
+                st.rerun()
+                
+        inv_df = pd.read_sql_query("SELECT name, batch, quantity, price, barcode FROM inventory WHERE retailer_id = ?;", conn, params=(st.session_state.user_id,))
+        st.markdown("### Current Inventory List")
         st.dataframe(inv_df, use_container_width=True)
 
     with tab_term:
