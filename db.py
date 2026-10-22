@@ -59,7 +59,8 @@ def init_db():
             store_type TEXT DEFAULT 'SINGLE', 
             subscription_status TEXT DEFAULT 'TRIAL', 
             plan_expiry_date TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes', '+30 days')), 
-            payment_status TEXT DEFAULT 'ACTIVE'
+            payment_status TEXT DEFAULT 'ACTIVE',
+            gstin TEXT DEFAULT '27AAAAA0000A1Z5'
         );""")
         
         c.execute("""CREATE TABLE IF NOT EXISTS store_terminals (
@@ -78,7 +79,8 @@ def init_db():
             batch TEXT, 
             quantity INTEGER, 
             price REAL DEFAULT 0.0,
-            barcode TEXT DEFAULT ''
+            barcode TEXT DEFAULT '',
+            gst_rate REAL DEFAULT 12.0
         );""")
         
         c.execute("""CREATE TABLE IF NOT EXISTS sales (
@@ -86,6 +88,8 @@ def init_db():
             retailer_id INTEGER, 
             invoice_number TEXT NOT NULL, 
             total_amount REAL NOT NULL, 
+            cgst REAL DEFAULT 0.0,
+            sgst REAL DEFAULT 0.0,
             created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );""")
         
