@@ -93,7 +93,6 @@ def init_db():
             created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );""")
 
-        # New Tables for Suppliers & Purchase Orders
         c.execute("""CREATE TABLE IF NOT EXISTS suppliers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             retailer_id INTEGER,
@@ -113,6 +112,20 @@ def init_db():
             items_summary TEXT NOT NULL,
             total_amount REAL NOT NULL,
             status TEXT DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+        );""")
+
+        # Schedule H1 Register Table for Legal Compliance
+        c.execute("""CREATE TABLE IF NOT EXISTS schedule_h1_register (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            retailer_id INTEGER,
+            patient_name TEXT NOT NULL,
+            patient_address TEXT,
+            doctor_name TEXT NOT NULL,
+            doctor_qualification TEXT,
+            medicine_name TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            prescription_date TEXT,
             created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );""")
         
