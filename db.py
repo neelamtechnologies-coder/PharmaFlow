@@ -92,6 +92,29 @@ def init_db():
             sgst REAL DEFAULT 0.0,
             created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
         );""")
+
+        # New Tables for Suppliers & Purchase Orders
+        c.execute("""CREATE TABLE IF NOT EXISTS suppliers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            retailer_id INTEGER,
+            supplier_name TEXT NOT NULL,
+            contact_person TEXT,
+            phone TEXT,
+            gstin TEXT,
+            outstanding_balance REAL DEFAULT 0.0,
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+        );""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS purchase_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            retailer_id INTEGER,
+            supplier_id INTEGER,
+            po_number TEXT NOT NULL,
+            items_summary TEXT NOT NULL,
+            total_amount REAL NOT NULL,
+            status TEXT DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+        );""")
         
         conn.commit()
 
